@@ -436,4 +436,27 @@ describe('admin clean-up, locks after publish, and the rest of the rules', () =>
     for (let i = 0; i < 450; i++) r.set(doc(a, ...P('c1', 'results', `e1_t${i}`)), { examId: 'e1', studentId: `t${i}`, total: 1 });
     await assertSucceeds(r.commit());
   });
+
+  it('replacing a teacher moves the timetable slots, and fails if the new teacher is already booked', async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      for (const i of [1, 2]) {
+        await setDoc(doc(db, ...P('c1', 'timetableSlots', `s${i}`)), { sectionId: 'sec1', facultyId: 'f1', dayOfWeek: i, period: 1, room: 'R', roomKey: 'r', assignmentId: 'a1' });
+        for (const k of [`room_r_${i}_1`, `faculty_f1_${i}_1`, `section_sec1_${i}_1`]) await setDoc(doc(db, ...P('c1', 'timetableLocks', k)), { slotId: `s${i}` });
+      }
+      await setDoc(doc(db, ...P('c1', 'timetableLocks', 'faculty_f2_2_1')), { slotId: 'other' }); // f2 is busy on day 2
+    });
+    const db = as('ca1');
+    const move = (days) => {
+      const b = writeBatch(db);
+      for (const i of days) {
+        b.delete(doc(db, ...P('c1', 'timetableLocks', `faculty_f1_${i}_1`)));
+        b.set(doc(db, ...P('c1', 'timetableLocks', `faculty_f2_${i}_1`)), { slotId: `s${i}` });
+        b.update(doc(db, ...P('c1', 'timetableSlots', `s${i}`)), { facultyId: 'f2', assignmentId: 'a3', updatedAt: now() });
+      }
+      return b.commit();
+    };
+    await assertFails(move([1, 2]));
+    await assertSucceeds(move([1]));
+  });
 });
