@@ -141,7 +141,10 @@ function ExamManager({ exam, onChange }) {
   const removePaper = (es) =>
     action.run(async () => {
       // Its marks go too: the paper's id is reused if the subject is added again, which would bring old marks back.
-      const marks = data.marks.filter((m) => m.examSubjectId === es.id);
+      // Read them fresh: a teacher may have saved more since this screen loaded.
+      const marks = await list(query(tcol(iid, 'studentMarks'), where('examSubjectId', '==', es.id)));
+      const warning = marks.length ? ` and the ${marks.length} marks already entered for it` : '';
+      if (!window.confirm(`Remove ${es.subjectName}${warning}? This cannot be undone.`)) return;
       for (const part of chunk(marks, 450)) {
         const batch = writeBatch(db);
         part.forEach((m) => batch.delete(tdoc(iid, 'studentMarks', m.id)));
@@ -225,7 +228,9 @@ function ExamManager({ exam, onChange }) {
         rows={data.examSubjects}
         empty="No papers yet."
         columns={[{ key: 'subjectName', label: 'Subject' }, { key: 'maxMarks', label: 'Max marks' }, { key: 'passMarks', label: 'Pass marks' }]}
-        actions={draft ? (es) => <Button small variant="danger" disabled={action.busy} onClick={() => removePaper(es)}>Remove paper</Button> : undefined}
+        actions={draft ? (es) => <Button small variant="danger" disabled={action.busy} onClick={() => removePaper(es)}>
+          {data.marks.some((m) => m.examSubjectId === es.id) ? 'Remove paper and its marks' : 'Remove paper'}
+        </Button> : undefined}
       />
       {draft && (
         <form className="row" onSubmit={addSubject} style={{ margin: '12px 0' }}>
