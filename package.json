@@ -8,8 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:rules": "firebase emulators:exec --config firebase.rules-test.json --only firestore --project rules-test \"vitest run -c vitest.rules.config.js\"",
-    "backup": "node scripts/backup.js"
+    "test:rules": "firebase emulators:exec --config firebase.rules-test.json --only firestore --project rules-test \"vitest run -c vitest.rules.config.js\""
   },
   "dependencies": {
     "firebase": "^11.0.0",
@@ -22,6 +21,7 @@
     "@vitejs/plugin-react": "^4.3.0",
     "firebase-admin": "^13.0.0",
     "firebase-tools": "^13.0.0",
+    "jsdom": "^29.1.1",
     "vite": "^5.4.0",
     "vitest": "^2.1.0"
   }

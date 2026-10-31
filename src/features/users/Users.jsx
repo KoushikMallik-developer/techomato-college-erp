@@ -28,8 +28,9 @@ function UserList() {
   );
   const action = useAction();
   const isSuper = role === ROLES.SUPER_ADMIN;
-  // College admins manage faculty and student logins; only the Super Admin touches College Admins.
-  const manageable = (u) => u.id !== uid && (['FACULTY', 'STUDENT'].includes(u.role) || (isSuper && u.role === ROLES.COLLEGE_ADMIN));
+  // Only the Super Admin blocks College Admins. Faculty and students are deactivated from their own profile pages,
+  // which also change the profile status in the same batch.
+  const manageable = (u) => isSuper && u.role === ROLES.COLLEGE_ADMIN && u.id !== uid;
 
   const setActive = (u, active) =>
     action.run(async () => {
@@ -45,7 +46,7 @@ function UserList() {
       <div className="row" style={{ marginBottom: 12 }}>
         {isSuper && <Button variant="primary" onClick={() => setCreating(true)}>Add College Admin</Button>}
       </div>
-      <Alert kind="info">Student and faculty logins are created from their profiles. To remove a student or faculty member fully, deactivate them from their profile page.</Alert>
+      <Alert kind="info">Faculty and student logins are created and deactivated from their own profile pages.</Alert>
       <Alert kind="error">{error?.message || action.error}</Alert>
       {loading ? <Loading /> : (
         <Table

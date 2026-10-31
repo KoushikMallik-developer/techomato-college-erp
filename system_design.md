@@ -13,7 +13,7 @@ The project starts on the **Firebase Spark (free) plan**. Spark constraints that
 
 - **No Cloud Functions** (they need Blaze). Server-side trust is enforced by **Firestore Security Rules** plus client batches (and, for files only, a small Cloudflare Worker). There is no privileged backend code.
 - **Hard daily quotas shared by all colleges.** Firestore free quota: 50k reads, 20k writes, 20k deletes per day, 1 GiB stored. When a quota is used up, the service stops for every college until reset. Rules cannot limit one college's usage. Check current numbers before launch.
-- **No managed backups or scheduled exports.** Backup is a local script (section 9).
+- **No managed backups or scheduled exports.** By decision this project keeps no backups of its own.
 - **No Firebase Storage** (a new project may need Blaze for it). Student files go to a private **Cloudflare R2** bucket behind a **Cloudflare Worker**, both on free plans. See section 5.3.
 
 **Spark is a pilot plan for one college of about 2000 students, or two small ones.** On a normal day that college uses about half of the daily writes, and on a marks-entry day it can use more than all of them (section 8). Onboarding more paying colleges needs the Blaze plan, which also unlocks Cloud Functions (section 12).
@@ -47,7 +47,7 @@ flowchart TD
 | Firebase Emulator Suite | Local development and automated Auth/Firestore rule tests (the Worker is tested with `wrangler dev`) |
 | App Check (reCAPTCHA) | Reject calls that do not come from the real web app; start in monitor mode |
 
-Use a separate Firebase project for development and production. Never commit service-account keys. The backup script's key stays on the Platform Admin's machine only.
+Use a separate Firebase project for development and production. Never commit service-account keys.
 
 ## 3. Frontend structure
 
@@ -85,7 +85,7 @@ Guidelines:
 
 **Dates:** store calendar dates (`date`, `admissionDate`) as `YYYY-MM-DD` strings in the college's time zone, never as UTC timestamps. Use server timestamps only for event times such as `createdAt`. `shortcut:` the client supplies the date string and rules only check its shape; a faculty member could back-date a register, and the audit log shows who. Upgrade to a server-computed date on Blaze.
 
-**`updatedAt`:** every document carries a server `updatedAt` timestamp, set on every write. The backup script uses it to export only what changed.
+**`updatedAt`:** every document carries a server `updatedAt` timestamp, set on every write.
 
 ### 4.1 Identity and institution
 
@@ -140,7 +140,7 @@ All collections in this and the following sections are under `institutions/{inst
 | `classSessions/{assignmentId}_{date}_{period}` | assignmentId, sectionId, subjectId, facultyId, date, period, presentCount, absentCount, leaveCount, updatedAt |
 | `facultyAttendance/{facultyId}_{date}` | facultyId, date, status, markedBy, updatedAt |
 
-`records` is a map from `d{YYYYMMDD}_{period}` to a status string (`PRESENT`, `ABSENT`, `LEAVE`), for example `{"d20261031_2": "PRESENT"}`. Keys start with a letter and have no `-`, so they are valid Firestore field paths. One document per student per teaching assignment (about one per subject per semester) holds the whole semester (about 200 entries, a few KB). One document per student per *session* would add about 10 MB a day per college, fill the free 1 GiB in 3 to 4 months, and make a full backup pass the daily read quota.
+`records` is a map from `d{YYYYMMDD}_{period}` to a status string (`PRESENT`, `ABSENT`, `LEAVE`), for example `{"d20261031_2": "PRESENT"}`. Keys start with a letter and have no `-`, so they are valid Firestore field paths. One document per student per teaching assignment (about one per subject per semester) holds the whole semester (about 200 entries, a few KB). One document per student per *session* would add about 10 MB a day per college and fill the free 1 GiB in 3 to 4 months.
 
 - **No duplicates:** the document ID and the map key are both deterministic, so one student cannot have two records for the same session.
 - **Faculty create rule:** the role is `FACULTY`, `facultyId` equals the signed-in faculty's, and the assignment named by `assignmentId` (one `get()`) belongs to that faculty, is `active`, and has the same `sectionId`, `subjectId` and `semesterId` as the document. A faculty member cannot label records with a class they do not teach.
@@ -192,7 +192,7 @@ All collections in this and the following sections are under `institutions/{inst
 - Faculty create or update attendance and marks only for their assignments, and read only attendance they wrote.
 - College Admin manages college records but cannot grant Super Admin.
 - The Platform Admin has no access to college data, only to `institutions` documents, Super Admin `users` documents and `platformAuditLogs`.
-- No Admin SDK credentials in the browser. The backup script runs only on a trusted machine.
+- No Admin SDK credentials in the browser.
 
 ### 5.3 Files (Cloudflare R2 + Worker)
 
@@ -220,7 +220,7 @@ All files go to a **private R2 bucket**: no public access, and no bucket keys in
 
 ### 5.4 Example Firestore rule pattern
 
-Conceptual starting point, not a full ruleset. Review and test every collection and operation before deployment. Audit entry creation must be in the same batch as the write that needs it. The first Platform Admin's `users` document is created by hand in the console.
+**`firestore.rules` is the authoritative ruleset (with `tests/rules/`); this block is a trimmed sketch.** Differences in the real file: reference data (departments, courses, subjects, years, semesters, sections, exams, announcements) shares one generic rule; `examSubjects` can be created, changed or deleted only while the exam is a draft; admins can delete `studentMarks` while the exam is a draft (to clear a stray record or remove a paper); `users` updates also pin `role`; students fetch results by ID as shown below. The file Worker also passes the App Check token on to Firestore. Review and test every collection and operation before deployment. Audit entry creation must be in the same batch as the write that needs it. The first Platform Admin's `users` document is created by hand in the console.
 
 ```javascript
 rules_version = '2';
@@ -484,9 +484,13 @@ service cloud.firestore {
       }
 
       match /results/{id} {
-        allow read: if isAdmin(iid) || (tenantOk(iid) && role() == 'STUDENT'
-          && resource.data.studentId == me().studentId
-          && get(/databases/$(database)/documents/institutions/$(iid)/exams/$(resource.data.examId)).data.status == 'PUBLISHED');
+        // IDs are {examId}_{studentId}. A student can fetch only their own result by ID, and only once the exam
+        // is published. Deciding from the ID (not the document) also works when no result exists, and avoids a
+        // query being rejected whole because one of the student's results is still a draft.
+        allow get: if isAdmin(iid) || (tenantOk(iid) && role() == 'STUDENT'
+          && id == id.split('_')[0] + '_' + me().studentId
+          && get(/databases/$(database)/documents/institutions/$(iid)/exams/$(id.split('_')[0])).data.status == 'PUBLISHED');
+        allow list: if isAdmin(iid);
         allow create, update: if isAdmin(iid)
           && get(/databases/$(database)/documents/institutions/$(iid)/exams/$(request.resource.data.examId)).data.status == 'DRAFT';
       }
@@ -526,7 +530,7 @@ Add field allow-lists, status checks (`PRESENT`/`ABSENT`/`LEAVE`) and immutable-
 | File access | Worker forwards the user's token and Firestore rules decide (kind-specific, including class enrollment for materials). Status only moves forward and the metadata document is deleted only after `DELETED`. Fixed slot IDs cap the files per folder. The Worker enforces size and checks the stored size |
 | Audit | `create`-only, staff only, entry must be new |
 | Dashboard totals | Client `count()` queries inside the college's path; attendance summary from `classSessions` |
-| Backup / offboarding | Local Admin SDK script, run by the Platform Admin |
+| Offboarding | Suspend the college; after the retention period, delete its data with an Admin SDK script (not provided) |
 
 ## 7. Frontend data flows
 
@@ -546,9 +550,9 @@ Do not put secret keys in React. Firebase web configuration is not a secret; Aut
 - Add a single-field index exemption for `studentAttendance.records` (`fieldOverrides` in `firestore.indexes.json`). Nobody queries by map key, and automatic indexing would add about two index entries per entry, which is about 400 per document at 200 entries.
 - **Quota budget (Spark, shared by all colleges):** each student-session mark is one write to that student's semester document. Daily writes per college ≈ students marked per day × periods, plus about 100 `classSessions`. With about 2000 students and 5 periods, that is about 10k writes against a 20k limit **for the whole project**. Marks entry is one write per student per subject: about 12k for 2000 students × 6 subjects per exam, and publishing adds about 2000 `results` writes. On a day with attendance and a full marks round together, one college writes about 22k and the project stops. Keep marks entry and publishing to about 8k writes a day in total (for example one department per day), and do not publish on the same day as a marks round. Attendance is about 12k small documents per semester per college, and marks about 48k with 4 exams (together well under 200 MB). Rule lookups count as reads, and every request pays two (user and college). Plan for one college on Spark; a second needs Blaze. Rules cannot cap one college's usage, so a busy college can stop all the others for the day.
 - **Files:** every file open costs about 4 to 5 Firestore reads (user, college, metadata, and for materials the assignment and enrollment lookups). R2's free 10 GB is shared by all colleges. Student documents at about 5 files of 0.5 MB for 2000 students are about 5 GB for one college. Class materials add more: about 6 subjects × 30 files × 1 MB is about 180 MB per section, so 20 sections is about 3.6 GB. Expect to need paid R2 (storage is cheap and downloads are free) with the first real college.
-- Never create one document per student per session. The free 1 GiB and the 20k daily deletes cannot absorb it, and a full backup would pass the daily read quota.
+- Never create one document per student per session. The free 1 GiB and the 20k daily deletes cannot absorb it.
 
-## 9. Environment, deployment and backup
+## 9. Environment and deployment
 
 ```text
 Browser → Firebase Hosting (HTTPS, React build + SPA fallback)
@@ -561,7 +565,7 @@ Repository layout:
 ```text
 college-management-system/
   src/  public/
-  scripts/backup.js      # local Admin SDK export, run by the Platform Admin only
+  scripts/create-platform-admin.js   # creates the first Platform Admin (run once, on your machine)
   worker/                # Cloudflare Worker for student files (wrangler.toml, src/index.js)
   firestore.rules  firestore.indexes.json
   firebase.json  .firebaserc  .env.example
@@ -579,7 +583,7 @@ Deployment steps:
 8. Create the private R2 bucket (no public access), deploy the Worker with the bucket binding, and set its allowed origin to the Hosting domain.
 9. Build the React app and deploy Hosting.
 
-**Backup (no managed backup on Spark):** `scripts/backup.js` uses the Admin SDK and is **incremental from the first run**. Every document carries `updatedAt`. The script stores the last-run time per college and exports only documents changed since then, as dated JSON files in one folder per college. It runs one college at a time (`--institution <id>`). Each run stops after about 15k reads and resumes on the next run, so the first export of a college continues over several runs. A full export of one busy college is about 80k documents after a semester (marks about 48k, attendance about 12k, class sessions about 9k, results about 8k). That is more than the whole 50k daily read quota all colleges share, so one full run would stop every college. Free quotas reset at midnight Pacific time (verify in the Firebase console), which is the middle of the day in India, so a run at local night still uses the same quota day as the next morning's traffic. Run it weekly and before any bulk change. Files in R2 are not covered by it: sync the bucket to a local folder weekly with `rclone` (R2 has no download fees). Keep copies off the machine. The service-account key is stored outside the repository. Test a restore into the dev project before launch. **Offboarding a college:** export it, suspend it, and after the agreed retention period delete its `institutions/{id}` subtree, its `users` documents, its R2 objects under the `{id}/` prefix and its Auth accounts with an Admin SDK script. Deleting costs against the 20k daily delete quota, so a large college takes several days.
+**Offboarding a college:** suspend it, and after the agreed retention period delete its `institutions/{id}` subtree, its `users` documents, its R2 objects under the `{id}/` prefix and its Auth accounts with an Admin SDK script. Deleting costs against the 20k daily delete quota, so a large college takes several days. There are no backups: Spark has no managed ones, and the project has decided it does not need its own.
 
 ## 10. Testing strategy
 
@@ -590,7 +594,7 @@ Deployment steps:
 | Worker | Missing, expired, forged or wrong-college tokens are refused; a student cannot fetch another student's file; a reader without upload rights cannot delete (`DELETE` needs status `DELETED`); size and type limits hold per kind, a missing `Content-Length` is refused (411), an upload larger than declared is deleted (400); a suspended college is refused; the object key comes from the URL path |
 | Integration | College creation, enrollment, attendance, marks and published results |
 | E2E | Platform Admin creates college → Super Admin setup → student enrollment → attendance → results |
-| Operations | Backup script (one college and all), restore rehearsal, offboarding rehearsal, quota estimate |
+| Operations | Offboarding rehearsal, quota estimate |
 
 Use the Emulator Suite for Auth and Firestore, and `wrangler dev` for the Worker. Include negative tests proving that unauthorized users cannot read or modify records, including a deactivated user holding a valid session.
 
@@ -601,11 +605,11 @@ Use the Emulator Suite for Auth and Firestore, and `wrangler dev` for the Worker
 3. Students, faculty, enrollments, teaching assignments, enrollment-number index.
 4. Timetable (with locks) and attendance (with audit), with rule tests.
 5. Exams, marks entry, result review and publishing, dashboards, announcements, exports.
-6. Security review, quota estimate, backup/restore/offboarding tests, pilot deployment with one college.
+6. Security review, quota estimate, offboarding test, pilot deployment with one college.
 
 ## 12. Future extension points (not MVP)
 
-- **Upgrade to Blaze + Cloud Functions** (needed before onboarding several paying colleges): self-service college sign-up, account provisioning with Admin SDK and custom claims, disabling accounts, per-college usage limits, attendance enrollment checks, server-computed dates, result calculation, scheduled backups.
+- **Upgrade to Blaze + Cloud Functions** (needed before onboarding several paying colleges): self-service college sign-up, account provisioning with Admin SDK and custom claims, disabling accounts, per-college usage limits, attendance enrollment checks, server-computed dates, result calculation.
 - **Identity Platform multi-tenancy** (Blaze): the same email in several colleges, per-college sign-in settings.
 - Subscription billing and payments (out of this MVP; would need trusted functions and a payment gateway).
 - Fees, custom domains and branding, library, hostel, transport, payroll, placements, mobile apps, notifications.
@@ -617,4 +621,4 @@ Use the Emulator Suite for Auth and Firestore, and `wrangler dev` for the Worker
 - Cloudflare R2: does enabling it need a payment method on file, and what are the current free limits (about 10 GB, and the Workers free plan's request cap)? If you cannot add one, STU-03 moves out of the MVP.
 - JavaScript or TypeScript for the React app (this document assumes JavaScript).
 - Firestore region, chosen for data residency and latency (one region for all colleges).
-- Backup schedule, where copies are kept, and the retention period before a suspended college's data is deleted.
+- The retention period before a suspended college's data is deleted.

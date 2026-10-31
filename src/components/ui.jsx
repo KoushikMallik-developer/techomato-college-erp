@@ -74,12 +74,24 @@ export function Tabs({ tabs, value, onChange }) {
 export function Modal({ title, onClose, children }) {
   const titleId = useId();
   const ref = useRef();
+  // Callers pass a new onClose every render; a ref keeps the effect from re-running (and stealing focus) on each keystroke.
+  const close = useRef(onClose);
+  close.current = onClose;
   useEffect(() => {
-    ref.current?.focus();
-    const onKey = (e) => e.key === 'Escape' && onClose();
+    const opener = document.activeElement;
+    ref.current.focus();
+    const onKey = (e) => {
+      if (e.key === 'Escape') return close.current();
+      if (e.key !== 'Tab') return;
+      const items = [...ref.current.querySelectorAll('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled])')];
+      if (!items.length) return;
+      const at = document.activeElement;
+      if (e.shiftKey && (at === items[0] || at === ref.current)) { e.preventDefault(); items.at(-1).focus(); }
+      else if (!e.shiftKey && at === items.at(-1)) { e.preventDefault(); items[0].focus(); }
+    };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+    return () => { window.removeEventListener('keydown', onKey); opener?.focus?.(); };
+  }, []);
   return (
     <div className="modal-back" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="modal" role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1} ref={ref}>

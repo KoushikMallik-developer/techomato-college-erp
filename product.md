@@ -105,7 +105,7 @@ Access is deny-by-default and scoped to the user's assigned records. Every colle
 
 - **Security:** Firebase Authentication; strict tenant isolation (each college's data lives under its own path and rules check the user's college on every request); roles and active status in the user profile, checked by least-privilege Firestore Security Rules on every request (student files are served by a Cloudflare Worker that defers to those rules); App Check enabled; no Admin credentials in the browser; audit log that cannot be edited or deleted.
 - **Privacy:** Minimize personal data; use private document storage; define retention and deletion procedures; do not collect Aadhaar unless a clear lawful need is established.
-- **Reliability:** Store attendance as one document per student per subject assignment so the free 1 GiB storage and daily read quota last. Use batched writes and transactions for related changes; use deterministic document IDs to prevent duplicates; keep regular backups with a local script and test restoration (the Spark plan has no managed backups).
+- **Reliability:** Store attendance as one document per student per subject assignment so the free 1 GiB storage and daily read quota last. Use batched writes and transactions for related changes; use deterministic document IDs to prevent duplicates; the project keeps no backups of its own (the Spark plan has none managed).
 - **Performance:** Paginate large lists; use indexed queries; avoid unbounded collection reads; use count queries for totals.
 - **Cost and quota control:** The Spark plan stops service for all colleges when the shared daily free quotas are used up, so it fits a pilot of one or two colleges only; move to the Blaze plan before onboarding more. Estimate reads and writes per screen, avoid real-time listeners on large collections, spread bulk marks entry and result publishing over several days, and plan an upgrade to the Blaze plan before nearing the limits.
 - **Accessibility:** Responsive UI, keyboard support, semantic labels, and reasonable contrast.
@@ -133,7 +133,6 @@ Access is deny-by-default and scoped to the user's assigned records. Every colle
 - Marks outside allowed ranges are rejected; unpublished results are invisible to students; a failed publish shows nothing to students.
 - Dashboard metrics reconcile with underlying records.
 - Firestore Security Rules are tested in the Firebase Emulator Suite before release, including batch sizes that stay within rule lookup limits. The file Worker is tested for missing, forged and wrong-college tokens.
-- Backup script and restore procedure are documented and tested; a backup run is incremental, handles one college at a time, and stays well under the daily read quota.
 
 ## 8. Release plan
 
@@ -143,7 +142,7 @@ Access is deny-by-default and scoped to the user's assigned records. Every colle
 | M2 | Student/faculty profiles, enrollments and assignments, student and faculty file upload (R2 Worker) |
 | M3 | Timetable, attendance and class materials |
 | M4 | Exams, marks, result publication, dashboards/reports |
-| M5 | Security-rule tests, end-to-end tests, backup and offboarding scripts, quota review, pilot deployment with one college |
+| M5 | Security-rule tests, end-to-end tests, an offboarding procedure, quota review, pilot deployment with one college |
 
 ## 9. Product decisions to confirm
 
