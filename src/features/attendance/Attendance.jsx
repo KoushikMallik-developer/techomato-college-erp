@@ -4,7 +4,7 @@ import { db } from '../../lib/firebase';
 import { useCtx } from '../../app/AuthProvider';
 import { ROLES, tcol, tdoc } from '../../lib/tenant';
 import { audit } from '../../lib/audit';
-import { STATUSES, attendanceBySubject, percent, planAttendanceWrites, recordKey, toCsv } from '../../lib/calc';
+import { STATUSES, attendanceBySubject, groupByCost, percent, planAttendanceWrites, recordKey, toCsv } from '../../lib/calc';
 import { byId, chunk, list } from '../../lib/data';
 import { Alert, Badge, Button, Input, Loading, PageHeader, Select, Table, Tabs, downloadCsv, useAction, useAsync } from '../../components/ui';
 
@@ -90,17 +90,24 @@ function Register({ a, date, period, ctx }) {
       const writes = planAttendanceWrites(data.roster, data.saved, key, statusOf).map(({ student: s, next, kind, old }) => {
         const ref = tdoc(ctx.iid, 'studentAttendance', `${s.studentId}_${a.id}`);
         const stamp = { updatedBy: ctx.uid, updatedAt: serverTimestamp() };
+        // cost = rule lookups: a new record checks the enrollment (1); an edit checks its audit entry (exists + existsAfter, 2).
         if (kind === 'create') {
-          return (b) => b.set(ref, {
-            studentId: s.studentId, subjectId: a.subjectId, semesterId: a.semesterId, sectionId: a.sectionId,
-            assignmentId: a.id, facultyId: a.facultyId, records: { [key]: next }, createdAt: serverTimestamp(), ...stamp,
-          });
+          return {
+            cost: 1,
+            run: (b) => b.set(ref, {
+              studentId: s.studentId, subjectId: a.subjectId, semesterId: a.semesterId, sectionId: a.sectionId,
+              assignmentId: a.id, facultyId: a.facultyId, records: { [key]: next }, createdAt: serverTimestamp(), ...stamp,
+            }),
+          };
         }
-        if (kind === 'add') return (b) => b.update(ref, { [`records.${key}`]: next, ...stamp });
+        if (kind === 'add') return { cost: 0, run: (b) => b.update(ref, { [`records.${key}`]: next, ...stamp }) };
         // Changing an existing mark: each edit gets its own new audit entry with the old and new value.
-        return (b) => {
-          const auditId = audit(b, ctx, 'ATTENDANCE_EDIT', 'studentAttendance', ref.id, { key, old, new: next });
-          b.update(ref, { [`records.${key}`]: next, ...stamp, auditId });
+        return {
+          cost: 2,
+          run: (b) => {
+            const auditId = audit(b, ctx, 'ATTENDANCE_EDIT', 'studentAttendance', ref.id, { key, old, new: next });
+            b.update(ref, { [`records.${key}`]: next, ...stamp, auditId });
+          },
         };
       });
       const counts = { PRESENT: 0, ABSENT: 0, LEAVE: 0 };
@@ -109,11 +116,11 @@ function Register({ a, date, period, ctx }) {
         assignmentId: a.id, sectionId: a.sectionId, subjectId: a.subjectId, facultyId: a.facultyId, date, period,
         presentCount: counts.PRESENT, absentCount: counts.ABSENT, leaveCount: counts.LEAVE, updatedAt: serverTimestamp(),
       };
-      // Up to two writes per student (edit + audit), so 200 students per batch stays under the 500 limit.
-      const groups = chunk(writes, 200);
+      // The rules allow about 20 lookups per batch and 3 are always used (user, college, assignment): stay at 14.
+      const groups = groupByCost(writes, 14);
       for (let i = 0; i < groups.length; i++) {
         const batch = writeBatch(db);
-        groups[i].forEach((w) => w(batch));
+        groups[i].forEach((w) => w.run(batch));
         if (i === groups.length - 1) batch.set(tdoc(ctx.iid, 'classSessions', `${a.id}_${date}_${period}`), session);
         await batch.commit();
       }

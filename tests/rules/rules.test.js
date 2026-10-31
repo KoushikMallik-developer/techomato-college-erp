@@ -209,13 +209,32 @@ describe('attendance', () => {
     await assertFails(getDocs(query(collection(as('stu2'), ...P('c1', 'studentAttendance')), where('studentId', '==', 's1'))));
   });
 
-  it('a 60-student register fits the rule lookup limits', async () => {
+  it('a student can be marked only in the section they are enrolled in', async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), ...P('c1', 'enrollments', 's3_sem1')), { studentId: 's3', sectionId: 'sec2', semesterId: 'sem1', status: 'ACTIVE' });
+    });
     const db = as('fac1');
-    const b = writeBatch(db);
-    for (let i = 0; i < 60; i++) {
-      b.set(doc(db, ...P('c1', 'studentAttendance', `s${i}_a1`)), { ...mark('d20261031_1', 'PRESENT'), studentId: `s${i}` });
+    const rec = (studentId) => ({ ...mark('d20261031_1', 'PRESENT'), studentId });
+    await assertSucceeds(setDoc(doc(db, ...P('c1', 'studentAttendance', 's1_a1')), rec('s1'))); // enrolled in sec1
+    await assertFails(setDoc(doc(db, ...P('c1', 'studentAttendance', 's3_a1')), rec('s3'))); // enrolled in sec2
+    await assertFails(setDoc(doc(db, ...P('c1', 'studentAttendance', 's2_a1')), rec('s2'))); // withdrawn
+    await assertFails(setDoc(doc(db, ...P('c1', 'studentAttendance', 'zz_a1')), rec('zz'))); // not enrolled at all
+  });
+
+  it('a register saves in groups of 14 lookups, 60 students over several batches', async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      for (let i = 0; i < 60; i++) {
+        await setDoc(doc(ctx.firestore(), ...P('c1', 'enrollments', `r${i}_sem1`)), { studentId: `r${i}`, sectionId: 'sec1', semesterId: 'sem1', status: 'ACTIVE' });
+      }
+    });
+    const db = as('fac1');
+    for (let start = 0; start < 60; start += 14) {
+      const b = writeBatch(db);
+      for (let i = start; i < Math.min(start + 14, 60); i++) {
+        b.set(doc(db, ...P('c1', 'studentAttendance', `r${i}_a1`)), { ...mark('d20261031_1', 'PRESENT'), studentId: `r${i}` });
+      }
+      await assertSucceeds(b.commit());
     }
-    await assertSucceeds(b.commit());
   });
 });
 

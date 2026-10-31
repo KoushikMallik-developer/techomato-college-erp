@@ -19,6 +19,25 @@ export function planAttendanceWrites(roster, saved, key, statusOf) {
   return plan;
 }
 
+// One batch may trigger about 20 document lookups in the rules (measured: 17 distinct lookups plus the user, college
+// and assignment lookups pass, 18 fail). Items carry a `cost`; groups stay under `limit`.
+export function groupByCost(items, limit) {
+  const groups = [];
+  let cur = [];
+  let cost = 0;
+  for (const item of items) {
+    if (cur.length && cost + item.cost > limit) {
+      groups.push(cur);
+      cur = [];
+      cost = 0;
+    }
+    cur.push(item);
+    cost += item.cost;
+  }
+  if (cur.length) groups.push(cur);
+  return groups;
+}
+
 export const enrollmentKey = (number) => number.trim().toUpperCase();
 export const roomKey = (room) => room.trim().toLowerCase();
 

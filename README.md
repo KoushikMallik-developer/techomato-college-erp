@@ -36,7 +36,7 @@ npm test             # business rules + file Worker (no emulator needed)
 npm run test:rules   # Security Rules, against the Firestore emulator (needs Java)
 ```
 
-If `npm run test:rules` stops with "port taken", a Java emulator from an earlier run is still alive (seen on Windows). End that Java process, or change the port in `firebase.rules-test.json` (now 8989).
+If `npm run test:rules` stops with "port taken", a Java emulator from an earlier run is still alive (seen on Windows). End that Java process, or change the port in `firebase.rules-test.json` (now 9292).
 
 The rules tests cover tenant isolation, role limits, audit-entry reuse, attendance and marks ownership, timetable locks, enrollment-number uniqueness, file slots and status, and result privacy.
 

@@ -32,7 +32,7 @@ Notes on decisions and state, so a new session can continue without re-deriving 
 ## Known limits (all written into system_design.md as shortcuts)
 - Spark's quotas are shared by all colleges: 20k writes a day for the whole project. One college of about 2000 students uses about half on a normal day and can exceed it on a marks-entry day. Spark fits a one-college pilot; a real multi-college launch needs Blaze.
 - Rules cannot rate-limit an allowed user, so a hostile staff member could use up the shared write quota. App Check and watching usage are the only brakes.
-- Rules do not check that a student is enrolled in the section for attendance or marks (one lookup per student would break the lookup limit).
+- Marks rules do not check that a student is enrolled in the section (one lookup per student). The publish screen flags marks under the wrong section and an admin removes them. Attendance records do check enrollment on creation; the register saves in groups of about 14 lookups because one batch allows about 20 (measured: 17 distinct lookups pass, 18 fail).
 - No backups, by decision (the user said they are not needed). Spark has none managed. The backup script and its indexes were removed.
 - Auth accounts cannot be disabled from the client; deactivation is enforced by `active` in rules only. A hostile admin can squat another college's email addresses.
 

@@ -197,6 +197,12 @@ service cloud.firestore {
         allow delete: if isAdmin(iid);
       }
 
+      // The student must be enrolled in the section being marked (and not withdrawn). One lookup per new record.
+      function enrolledIn(studentId, semesterId, sectionId) {
+        let e = get(/databases/$(database)/documents/institutions/$(iid)/enrollments/$(studentId + '_' + semesterId)).data;
+        return e.sectionId == sectionId && e.status != 'WITHDRAWN';
+      }
+
       // One entry per write: new entries are free, changing an existing one needs a new audit entry.
       function oneEntryChange() {
         let d = request.resource.data.records.diff(resource.data.records);
@@ -216,6 +222,7 @@ service cloud.firestore {
           && assignment(request.resource.data.assignmentId).sectionId == request.resource.data.sectionId
           && assignment(request.resource.data.assignmentId).subjectId == request.resource.data.subjectId
           && assignment(request.resource.data.assignmentId).semesterId == request.resource.data.semesterId
+          && enrolledIn(request.resource.data.studentId, request.resource.data.semesterId, request.resource.data.sectionId)
           && request.resource.data.records.size() == 1
           && request.resource.data.records.values().hasOnly(['PRESENT', 'ABSENT', 'LEAVE']);
         allow update: if isFaculty(iid)

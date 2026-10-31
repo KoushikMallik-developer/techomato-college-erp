@@ -54,7 +54,10 @@ export async function uploadFile({ iid, uid, collection, ownerId, file, title, k
 export async function downloadFile(iid, collection, ownerId, d) {
   const res = await call('GET', iid, collection, ownerId, d.id);
   const url = URL.createObjectURL(await res.blob());
-  const a = Object.assign(document.createElement('a'), { href: url, download: d.name });
+  // A typed title usually has no extension, and a file without one will not open.
+  const ext = { 'application/pdf': '.pdf', 'image/jpeg': '.jpg', 'image/png': '.png' }[d.contentType] ?? '';
+  const download = d.name.toLowerCase().endsWith(ext) ? d.name : d.name + ext;
+  const a = Object.assign(document.createElement('a'), { href: url, download });
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 5000);
 }

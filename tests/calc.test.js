@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { attendanceBySubject, checkExam, computeResult, enrollmentKey, percent, planAttendanceWrites, recordKey, roomKey, todayIn, validTimeZone } from '../src/lib/calc';
+import { attendanceBySubject, checkExam, groupByCost, computeResult, enrollmentKey, percent, planAttendanceWrites, recordKey, roomKey, todayIn, validTimeZone } from '../src/lib/calc';
 
 describe('attendance', () => {
   it('excludes leave from the percentage', () => {
@@ -91,5 +91,16 @@ describe('publish gate', () => {
     expect(r.wrongSection.map((w) => w.id)).toEqual(['p1_s2']);
     const ok = checkExam({ enrollments: enrollments.slice(0, 1), examSubjects, marks });
     expect([ok.gaps.length, ok.wrongSection.length]).toEqual([0, 0]);
+  });
+});
+
+describe('batch grouping', () => {
+  it('keeps each batch under the lookup cost limit and loses nothing', () => {
+    const items = [1, 1, 2, 2, 0, 1, 2, 1].map((cost, id) => ({ cost, id }));
+    const groups = groupByCost(items, 4);
+    expect(groups.map((g) => g.reduce((n, i) => n + i.cost, 0)).every((n) => n <= 4)).toBe(true);
+    expect(groups.flat().map((i) => i.id)).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+    expect(groupByCost([], 4)).toEqual([]);
+    expect(groupByCost([{ cost: 9 }], 4)).toHaveLength(1); // one oversized item still gets its own batch
   });
 });
