@@ -118,6 +118,7 @@ function SlotForm({ slot, onClose }) {
     assignmentId: '', room: slot.room ?? '', dayOfWeek: String(slot.dayOfWeek), period: String(slot.period),
   });
   const { busy, error, run } = useAction();
+  const [confirming, setConfirming] = useState(false);
 
   const submit = (e) => {
     e.preventDefault();
@@ -157,6 +158,19 @@ function SlotForm({ slot, onClose }) {
       onClose(true);
     });
 
+  if (confirming) {
+    return (
+      <Modal title="Delete this slot?" onClose={() => setConfirming(false)}>
+        <Alert kind="error">{error}</Alert>
+        <p className="muted">{slot.subjectName}, {slot.facultyName}, room {slot.room}. The room, teacher and section are free in that period again.</p>
+        <div className="modal-actions">
+          <Button onClick={() => setConfirming(false)} disabled={busy}>Keep it</Button>
+          <Button variant="danger" disabled={busy} onClick={remove}>{busy ? 'Deleting…' : 'Delete slot'}</Button>
+        </div>
+      </Modal>
+    );
+  }
+
   return (
     <Modal title={isNew ? 'Add slot' : 'Edit slot'} onClose={() => onClose(false)}>
       <form onSubmit={submit}>
@@ -179,7 +193,7 @@ function SlotForm({ slot, onClose }) {
         {assignments.data?.length === 0 && <Alert kind="info">No active teaching assignments for this section yet. Add one under Academics.</Alert>}
         <div className="row" style={{ marginTop: 12 }}>
           <Button variant="primary" type="submit" disabled={busy}>{busy ? 'Saving…' : 'Save'}</Button>
-          {!isNew && <Button variant="danger" disabled={busy} onClick={remove}>Delete slot</Button>}
+          {!isNew && <Button variant="danger" disabled={busy} onClick={() => setConfirming(true)}>Delete slot</Button>}
           <Button onClick={() => onClose(false)}>Cancel</Button>
         </div>
       </form>

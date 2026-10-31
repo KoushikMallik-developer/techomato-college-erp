@@ -5,7 +5,7 @@ import { useCtx } from '../../app/AuthProvider';
 import { ROLES, tcol } from '../../lib/tenant';
 import { audit } from '../../lib/audit';
 import { createAuthUser, list, sendSetPasswordEmail } from '../../lib/data';
-import { Alert, Badge, Button, Input, Loading, Modal, PageHeader, Table, Tabs, useAction, useAsync, useForm } from '../../components/ui';
+import { Alert, Badge, Button, Input, Loading, Modal, PageHeader, Table, Tabs, useAction, useAsync, useConfirm, useForm } from '../../components/ui';
 import { collection } from 'firebase/firestore';
 
 export default function Users() {
@@ -29,6 +29,7 @@ function UserList() {
     [iid],
   );
   const action = useAction();
+  const confirm = useConfirm();
   const isSuper = role === ROLES.SUPER_ADMIN;
   // Only the Super Admin blocks College Admins. Faculty and students are deactivated from their own profile pages,
   // which also change the profile status in the same batch.
@@ -59,10 +60,11 @@ function UserList() {
             { key: 'active', label: 'Status', render: (u) => <Badge kind={u.active ? 'ok' : 'bad'}>{u.active ? 'Active' : 'Blocked'}</Badge> },
           ]}
           actions={(u) => manageable(u) && (u.active
-            ? <Button small variant="danger" disabled={action.busy} onClick={() => setActive(u, false)}>Block</Button>
+            ? <Button small variant="danger" disabled={action.busy} onClick={() => confirm.ask({ title: `Block ${u.displayName}?`, body: 'They cannot sign in until you unblock them.', label: 'Block' }, () => setActive(u, false))}>Block</Button>
             : <Button small disabled={action.busy} onClick={() => setActive(u, true)}>Unblock</Button>)}
         />
       )}
+      {confirm.dialog}
       {creating && <CreateAdmin onClose={(saved) => { setCreating(false); if (saved) reload(); }} />}
     </>
   );

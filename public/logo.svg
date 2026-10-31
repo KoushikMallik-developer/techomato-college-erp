@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 330 64" role="img" aria-label="Techomato College ERP">
+  <title>Techomato College ERP</title>
+  <svg x="0" y="2" width="60" height="60" viewBox="1 1.5 32 32"><circle cx="17" cy="19" r="14" fill="#c8381f"/>
+<path d="M13 5c2 2 6 2 8 0" stroke="#2f5d3a" stroke-width="2.4" fill="none" stroke-linecap="round"/>
+<path d="M12.5 15.5 9 19l3.5 3.5M21.5 15.5 25 19l-3.5 3.5" stroke="#fff" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  <text x="74" y="40" font-family="'Bricolage Grotesque','Instrument Sans',system-ui,sans-serif" font-size="27" font-weight="800" letter-spacing="-0.5" fill="#17181c">Techomato <tspan fill="#c8381f">College ERP</tspan></text>
+</svg>

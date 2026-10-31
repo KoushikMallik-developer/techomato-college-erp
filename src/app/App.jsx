@@ -1,5 +1,6 @@
 import { Suspense, lazy, useState } from 'react';
 import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import BrandMark from '../components/BrandMark';
 import { useCtx } from './AuthProvider';
 import { Button, Loading } from '../components/ui';
 import ErrorBoundary from '../components/ErrorBoundary';
@@ -56,7 +57,7 @@ function Shell() {
     <div className="shell">
       <Button className="menu-btn" onClick={() => setOpen(!open)} aria-expanded={open}>Menu</Button>
       <aside className={`side ${open ? 'open' : ''}`}>
-        <div className="brand">{institution?.name ?? 'Techomato ERP'}</div>
+        <div className="brand"><BrandMark />{institution?.name ?? 'Techomato ERP'}</div>
         <nav aria-label="Main">
           {navFor(role).map(([to, label]) => (
             <NavLink key={to} to={to} onClick={() => setOpen(false)}>{label}</NavLink>

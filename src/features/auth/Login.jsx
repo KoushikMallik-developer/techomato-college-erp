@@ -4,6 +4,7 @@ import { sendPasswordResetEmail, signInWithEmailAndPassword } from 'firebase/aut
 import { auth } from '../../lib/firebase';
 import { Alert, Button, Input, useAction } from '../../components/ui';
 import { useCtx } from '../../app/AuthProvider';
+import BrandMark from '../../components/BrandMark';
 import { loginEmail } from '../../lib/calc';
 
 export default function Login() {
@@ -23,6 +24,7 @@ export default function Login() {
     <div className="login">
       <form className="card" onSubmit={submit}>
         <Link to="/">← Back to home</Link>
+        <BrandMark size={36} />
         <h1>Techomato College ERP</h1>
         <p className="muted">Sign in with the email your college gave you.</p>
         <Alert kind="error">{error || accountError}</Alert>

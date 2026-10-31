@@ -102,6 +102,28 @@ export function Modal({ title, onClose, children }) {
   );
 }
 
+// Read-only details; edits happen in a modal. items: [[label, value]]
+export const Facts = ({ items }) => (
+  <dl className="facts">{items.map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{v || '—'}</dd></div>)}</dl>
+);
+
+// Asks first, then runs the action. Render `dialog` once in the screen: ask({ title, body, label, danger }, fn).
+export function useConfirm() {
+  const [req, setReq] = useState(null);
+  const ask = (opts, fn) => setReq({ ...opts, fn });
+  const close = () => setReq(null);
+  const dialog = req && (
+    <Modal title={req.title} onClose={close}>
+      {req.body && <p className="muted">{req.body}</p>}
+      <div className="modal-actions">
+        <Button onClick={close}>Cancel</Button>
+        <Button variant={req.danger === false ? 'primary' : 'danger'} onClick={() => { close(); req.fn(); }}>{req.label ?? 'Confirm'}</Button>
+      </div>
+    </Modal>
+  );
+  return { ask, dialog };
+}
+
 // columns: [{ key, label, render? }]
 // rows is undefined when the load failed; the screen shows the error above, so draw an empty table, not a crash.
 export function Table({ columns, rows = [], empty = 'Nothing here yet.', actions }) {

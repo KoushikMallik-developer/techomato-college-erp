@@ -6,7 +6,7 @@ import { ROLES, tcol, tdoc } from '../../lib/tenant';
 import { audit } from '../../lib/audit';
 import { checkExam, computeResult, toCsv } from '../../lib/calc';
 import { byId, chunk, list } from '../../lib/data';
-import { Alert, Badge, Button, Input, Loading, Modal, PageHeader, Select, Table, toOptions, downloadCsv, useAction, useAsync, useForm } from '../../components/ui';
+import { Alert, Badge, Button, Input, Loading, Modal, PageHeader, Select, Table, toOptions, downloadCsv, useAction, useAsync, useConfirm, useForm } from '../../components/ui';
 
 export default function Exams() {
   const { role } = useCtx();
@@ -115,24 +115,22 @@ function ExamManager({ exam, onChange }) {
   const draft = exam.status === 'DRAFT';
   const { data, loading, error, reload } = useAsync(() => loadSummary(iid, exam), [exam.id, exam.status]);
   const [details, setDetails] = useState(null); // the full check, only after the admin asks for it
-  const { values, bind } = useForm({ subjectId: '', maxMarks: '', passMarks: '' });
+  const [adding, setAdding] = useState(false);
   const action = useAction();
+  const confirm = useConfirm();
 
   if (loading) return <Loading />;
   if (error) return <Alert kind="error">{error.message}</Alert>;
 
   const chosen = new Set(data.examSubjects.map((x) => x.subjectId));
-  const addSubject = (e) => {
-    e.preventDefault();
-    action.run(async () => {
-      const s = data.S[values.subjectId];
-      await setDoc(tdoc(iid, 'examSubjects', `${exam.id}_${s.id}`), {
-        examId: exam.id, subjectId: s.id, subjectName: s.name, maxMarks: Number(values.maxMarks || s.maxMarks),
-        passMarks: Number(values.passMarks || s.passMarks), createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
-      });
-      setDetails(null);
-      reload();
+  const addSubject = async (values) => {
+    const s = data.S[values.subjectId];
+    await setDoc(tdoc(iid, 'examSubjects', `${exam.id}_${s.id}`), {
+      examId: exam.id, subjectId: s.id, subjectName: s.name, maxMarks: Number(values.maxMarks || s.maxMarks),
+      passMarks: Number(values.passMarks || s.passMarks), createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
     });
+    setDetails(null);
+    reload();
   };
 
   const { gaps, wrongSection } = details ? checkExam(details) : { gaps: [], wrongSection: [] };
@@ -141,13 +139,18 @@ function ExamManager({ exam, onChange }) {
 
   const checkMarks = () => action.run(async () => setDetails(await loadExam(iid, exam)));
 
+  const askRemovePaper = (es) =>
+    action.run(async () => {
+      const count = (await getCountFromServer(query(tcol(iid, 'studentMarks'), where('examSubjectId', '==', es.id)))).data().count;
+      const warning = count ? ` and the ${count} marks already entered for it` : '';
+      confirm.ask({ title: `Remove ${es.subjectName}?`, body: `This removes the paper${warning}. It cannot be undone.`, label: 'Remove paper' }, () => removePaper(es));
+    });
+
   const removePaper = (es) =>
     action.run(async () => {
       // Its marks go too: the paper's id is reused if the subject is added again, which would bring old marks back.
-      // Read them fresh: a teacher may have saved more since this screen loaded.
+      // Read them fresh: a teacher may have saved more since the question was asked.
       const marks = await list(query(tcol(iid, 'studentMarks'), where('examSubjectId', '==', es.id)));
-      const warning = marks.length ? ` and the ${marks.length} marks already entered for it` : '';
-      if (!window.confirm(`Remove ${es.subjectName}${warning}? This cannot be undone.`)) return;
       const batches = chunk(marks, 450).map((part) => {
         const b = writeBatch(db);
         part.forEach((m) => b.delete(tdoc(iid, 'studentMarks', m.id)));
@@ -236,16 +239,9 @@ function ExamManager({ exam, onChange }) {
         rows={data.examSubjects}
         empty="No papers yet."
         columns={[{ key: 'subjectName', label: 'Subject' }, { key: 'maxMarks', label: 'Max marks' }, { key: 'passMarks', label: 'Pass marks' }]}
-        actions={draft ? (es) => <Button small variant="danger" disabled={action.busy} onClick={() => removePaper(es)}>Remove paper and its marks</Button> : undefined}
+        actions={draft ? (es) => <Button small variant="danger" disabled={action.busy} onClick={() => askRemovePaper(es)}>Remove paper and its marks</Button> : undefined}
       />
-      {draft && (
-        <form className="row" onSubmit={addSubject} style={{ margin: '12px 0' }}>
-          <Select label="Add subject" required options={toOptions(data.subjects.filter((s) => !chosen.has(s.id)))} {...bind('subjectId')} />
-          <Input label="Max marks" type="number" hint="blank = subject default" {...bind('maxMarks')} />
-          <Input label="Pass marks" type="number" hint="blank = subject default" {...bind('passMarks')} />
-          <Button type="submit" disabled={action.busy}>Add paper</Button>
-        </form>
-      )}
+      {draft && <div className="row" style={{ margin: '12px 0' }}><Button onClick={() => setAdding(true)}>Add paper</Button></div>}
       <h3>Publishing</h3>
       {draft ? (
         <>
@@ -268,14 +264,14 @@ function ExamManager({ exam, onChange }) {
                 {wrongSection.slice(0, 10).map((w) => (
                   <li key={w.id}>
                     {w.student} — {w.paper}{' '}
-                    <Button small variant="danger" disabled={action.busy} onClick={() => removeMark(w)}>Remove record</Button>
+                    <Button small variant="danger" disabled={action.busy} onClick={() => confirm.ask({ title: 'Remove this marks record?', body: `${w.student}, ${w.paper}. The teacher of the right section enters it again.`, label: 'Remove record' }, () => removeMark(w))}>Remove record</Button>
                   </li>
                 ))}
               </ul>
             </Alert>
           )}
           <p className="muted">Publishing writes {resultCount} result records, against the shared daily free quota. Avoid doing it on a heavy marks-entry day.</p>
-          <Button variant="primary" onClick={publish}
+          <Button variant="primary" onClick={() => confirm.ask({ title: 'Publish results?', body: `${resultCount} students will see their results straight away, and marks are locked until you unpublish.`, label: 'Publish', danger: false }, publish)}
             disabled={action.busy || gaps.length > 0 || wrongSection.length > 0 || !data.examSubjects.length || !resultCount || data.entered < expected}>
             {action.busy ? 'Publishing…' : 'Publish results'}
           </Button>
@@ -283,10 +279,37 @@ function ExamManager({ exam, onChange }) {
       ) : (
         <div className="row">
           <Button onClick={exportCsv} disabled={action.busy}>Export results CSV</Button>
-          <Button variant="danger" onClick={unpublish} disabled={action.busy}>Unpublish to correct marks</Button>
+          <Button variant="danger" disabled={action.busy} onClick={() => confirm.ask({ title: 'Unpublish results?', body: 'Students stop seeing them until you publish again.', label: 'Unpublish' }, unpublish)}>Unpublish to correct marks</Button>
         </div>
       )}
+      {confirm.dialog}
+      {adding && <AddPaper subjects={data.subjects.filter((s) => !chosen.has(s.id))} onSave={addSubject} onClose={() => setAdding(false)} />}
     </div>
+  );
+}
+
+function AddPaper({ subjects, onSave, onClose }) {
+  const { values, bind } = useForm({ subjectId: '', maxMarks: '', passMarks: '' });
+  const { busy, error, run } = useAction();
+  const submit = (e) => {
+    e.preventDefault();
+    run(async () => { await onSave(values); onClose(); });
+  };
+  return (
+    <Modal title="Add paper" onClose={onClose}>
+      <form onSubmit={submit}>
+        <Alert kind="error">{error}</Alert>
+        <div className="form-grid">
+          <Select label="Subject" required options={toOptions(subjects)} {...bind('subjectId')} />
+          <Input label="Max marks" type="number" hint="blank = subject default" {...bind('maxMarks')} />
+          <Input label="Pass marks" type="number" hint="blank = subject default" {...bind('passMarks')} />
+        </div>
+        <div className="row">
+          <Button onClick={onClose}>Cancel</Button>
+          <Button variant="primary" type="submit" disabled={busy}>{busy ? 'Adding…' : 'Add paper'}</Button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 

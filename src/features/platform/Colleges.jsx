@@ -5,7 +5,7 @@ import { useCtx } from '../../app/AuthProvider';
 import { platformAudit } from '../../lib/audit';
 import { validTimeZone } from '../../lib/calc';
 import { createAuthUser, sendSetPasswordEmail, slug } from '../../lib/data';
-import { Alert, Badge, Button, Input, Modal, PageHeader, Table, useAction, useAsync, useForm } from '../../components/ui';
+import { Alert, Badge, Button, Input, Modal, PageHeader, Table, useAction, useAsync, useConfirm, useForm } from '../../components/ui';
 
 const blank = { name: '', code: '', timezone: 'Asia/Kolkata', plan: '', adminName: '', adminEmail: '' };
 
@@ -17,6 +17,7 @@ export default function Colleges() {
     return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
   }, []);
   const action = useAction();
+  const confirm = useConfirm();
 
   const setStatus = (c, status) =>
     action.run(async () => {
@@ -49,10 +50,11 @@ export default function Colleges() {
           ]}
           actions={(c) =>
             c.status === 'ACTIVE'
-              ? <Button small variant="danger" disabled={action.busy} onClick={() => setStatus(c, 'SUSPENDED')}>Suspend</Button>
-              : <Button small disabled={action.busy} onClick={() => setStatus(c, 'ACTIVE')}>Reactivate</Button>}
+              ? <Button small variant="danger" disabled={action.busy} onClick={() => confirm.ask({ title: `Suspend ${c.name}?`, body: 'All its users are locked out on their next request. Nothing is deleted.', label: 'Suspend' }, () => setStatus(c, 'SUSPENDED'))}>Suspend</Button>
+              : <Button small disabled={action.busy} onClick={() => confirm.ask({ title: `Reactivate ${c.name}?`, body: 'Its users can sign in again.', label: 'Reactivate', danger: false }, () => setStatus(c, 'ACTIVE'))}>Reactivate</Button>}
         />
       )}
+      {confirm.dialog}
       {open && <CreateCollege onClose={() => { setOpen(false); reload(); }} />}
     </>
   );

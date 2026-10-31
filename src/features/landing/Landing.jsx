@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import { useCtx } from '../../app/AuthProvider';
+import BrandMark from '../../components/BrandMark';
 import './landing.css';
 
 const CONTACT = import.meta.env.VITE_CONTACT_EMAIL;
@@ -101,7 +102,7 @@ export default function Landing() {
       <a className="lp-skip" href="#main">Skip to content</a>
       <header className="lp-nav">
         <div className="lp-wrap lp-nav-in">
-          <Link to="/" className="lp-brand"><span className="lp-logo" aria-hidden="true">T</span> Techomato College ERP</Link>
+          <Link to="/" className="lp-brand"><BrandMark size={30} /> Techomato College ERP</Link>
           <nav aria-label="Page sections" className="lp-links">
             <a href="#features">Features</a>
             <a href="#how">How it works</a>

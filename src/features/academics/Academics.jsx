@@ -5,7 +5,7 @@ import { useCtx } from '../../app/AuthProvider';
 import { tcol, tdoc } from '../../lib/tenant';
 import { audit } from '../../lib/audit';
 import { byId, list } from '../../lib/data';
-import { Alert, Badge, Button, Loading, Modal, PageHeader, Select, Table, Tabs, toOptions, useAction, useAsync, useForm } from '../../components/ui';
+import { Alert, Badge, Button, Loading, Modal, PageHeader, Select, Table, Tabs, toOptions, useAction, useAsync, useForm, useConfirm } from '../../components/ui';
 import CrudPage from './CrudPage';
 
 const STATUS = [{ value: 'ACTIVE', label: 'Active' }, { value: 'INACTIVE', label: 'Inactive' }];
@@ -97,6 +97,7 @@ function Assignments() {
     return { assignments, faculty, subjects, sections, S: byId(subjects), SE: byId(sections) };
   }, [iid]);
   const action = useAction();
+  const confirm = useConfirm();
 
   if (loading) return <Loading />;
   if (error) return <Alert kind="error">{error.message}</Alert>;
@@ -127,10 +128,11 @@ function Assignments() {
         actions={(a) => a.active && (
           <>
             <Button small onClick={() => setMode({ replace: a })}>Replace teacher</Button>{' '}
-            <Button small variant="danger" disabled={action.busy} onClick={() => deactivate(a)}>End</Button>
+            <Button small variant="danger" disabled={action.busy} onClick={() => confirm.ask({ title: 'End this assignment?', body: `${a.facultyName} stops teaching ${data.S[a.subjectId]?.name ?? a.subjectName}. Past attendance and marks stay.`, label: 'End assignment' }, () => deactivate(a))}>End</Button>
           </>
         )}
       />
+      {confirm.dialog}
       {mode && <AssignForm data={data} replace={mode.replace} onClose={(saved) => { setMode(null); if (saved) reload(); }} />}
     </>
   );

@@ -7,7 +7,7 @@ import { tcol, tdoc } from '../../lib/tenant';
 import { audit } from '../../lib/audit';
 import { chunk, list } from '../../lib/data';
 import FilePanel from '../../components/FilePanel';
-import { Alert, Badge, Button, Input, Loading, PageHeader, Table, Tabs, useAction, useAsync, useForm } from '../../components/ui';
+import { Alert, Badge, Button, Facts, Input, Loading, Modal, PageHeader, Table, Tabs, useAction, useAsync, useConfirm, useForm } from '../../components/ui';
 
 export default function FacultyDetail() {
   const { id } = useParams();
@@ -38,9 +38,41 @@ export default function FacultyDetail() {
 
 function Profile({ f, reload }) {
   const { iid, uid } = useCtx();
-  const { values, bind } = useForm({ name: f.name, phone: f.phone ?? '', designation: f.designation ?? '' });
+  const [editing, setEditing] = useState(false);
   const { busy, error, done, run } = useAction();
+  const confirm = useConfirm();
 
+  const setActive = (active) =>
+    run(async () => {
+      const batch = writeBatch(db);
+      const auditId = audit(batch, { iid, uid }, active ? 'FACULTY_REACTIVATED' : 'FACULTY_DEACTIVATED', 'faculty', f.id, {});
+      batch.update(tdoc(iid, 'faculty', f.id), { status: active ? 'ACTIVE' : 'INACTIVE', updatedAt: serverTimestamp() });
+      if (f.uid) batch.update(doc(db, 'users', f.uid), { active, updatedAt: serverTimestamp(), auditId });
+      await batch.commit();
+      reload();
+    }, active ? 'Reactivated.' : 'Deactivated. Their login is blocked. Replace them on their classes under Academics.');
+
+  return (
+    <div className="card">
+      <Alert kind="error">{error}</Alert>
+      <Alert kind="ok">{done}</Alert>
+      <Facts items={[['Employee code', f.employeeCode], ['Email', f.email], ['Full name', f.name], ['Phone', f.phone], ['Designation', f.designation]]} />
+      <div className="row">
+        <Button variant="primary" disabled={busy} onClick={() => setEditing(true)}>Edit details</Button>
+        {f.status === 'ACTIVE'
+          ? <Button variant="danger" disabled={busy} onClick={() => confirm.ask({ title: `Deactivate ${f.name}?`, body: 'Their login is blocked. Replace them on their classes under Academics.', label: 'Deactivate' }, () => setActive(false))}>Deactivate</Button>
+          : <Button disabled={busy} onClick={() => confirm.ask({ title: `Reactivate ${f.name}?`, body: 'Their login works again.', label: 'Reactivate', danger: false }, () => setActive(true))}>Reactivate</Button>}
+      </div>
+      {confirm.dialog}
+      {editing && <EditFaculty f={f} onClose={(saved) => { setEditing(false); if (saved) reload(); }} />}
+    </div>
+  );
+}
+
+function EditFaculty({ f, onClose }) {
+  const { iid, uid } = useCtx();
+  const { values, bind } = useForm({ name: f.name, phone: f.phone ?? '', designation: f.designation ?? '' });
+  const { busy, error, run } = useAction();
   const save = (e) => {
     e.preventDefault();
     run(async () => {
@@ -68,37 +100,25 @@ function Profile({ f, reload }) {
       } else {
         await updateDoc(tdoc(iid, 'faculty', f.id), { ...values, updatedAt: serverTimestamp() });
       }
-      reload();
-    }, 'Saved.');
+      onClose(true);
+    });
   };
-  const setActive = (active) =>
-    run(async () => {
-      const batch = writeBatch(db);
-      const auditId = audit(batch, { iid, uid }, active ? 'FACULTY_REACTIVATED' : 'FACULTY_DEACTIVATED', 'faculty', f.id, {});
-      batch.update(tdoc(iid, 'faculty', f.id), { status: active ? 'ACTIVE' : 'INACTIVE', updatedAt: serverTimestamp() });
-      if (f.uid) batch.update(doc(db, 'users', f.uid), { active, updatedAt: serverTimestamp(), auditId });
-      await batch.commit();
-      reload();
-    }, active ? 'Reactivated.' : 'Deactivated. Their login is blocked. Replace them on their classes under Academics.');
-
   return (
-    <form className="card" onSubmit={save}>
-      <Alert kind="error">{error}</Alert>
-      <Alert kind="ok">{done}</Alert>
-      <div className="form-grid">
-        <Input label="Employee code" value={f.employeeCode} onChange={() => {}} readOnly />
-        <Input label="Email" value={f.email} onChange={() => {}} readOnly hint="Set at creation" />
-        <Input label="Full name" required {...bind('name')} />
-        <Input label="Phone" {...bind('phone')} />
-        <Input label="Designation" {...bind('designation')} />
-      </div>
-      <div className="row" style={{ marginTop: 12 }}>
-        <Button variant="primary" type="submit" disabled={busy}>Save</Button>
-        {f.status === 'ACTIVE'
-          ? <Button variant="danger" disabled={busy} onClick={() => setActive(false)}>Deactivate</Button>
-          : <Button disabled={busy} onClick={() => setActive(true)}>Reactivate</Button>}
-      </div>
-    </form>
+    <Modal title="Edit faculty member" onClose={() => onClose(false)}>
+      <form onSubmit={save}>
+        <Alert kind="error">{error}</Alert>
+        <div className="form-grid">
+          <Input label="Full name" required {...bind('name')} />
+          <Input label="Phone" {...bind('phone')} />
+          <Input label="Designation" {...bind('designation')} />
+        </div>
+        <p className="muted">The employee code and email cannot be changed.</p>
+        <div className="row">
+          <Button onClick={() => onClose(false)}>Cancel</Button>
+          <Button variant="primary" type="submit" disabled={busy}>{busy ? 'Saving…' : 'Save'}</Button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 

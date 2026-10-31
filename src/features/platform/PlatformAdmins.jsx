@@ -13,15 +13,18 @@ const tooShort = `The password must be at least ${MIN} characters.`;
 
 export default function PlatformAdmins() {
   const [adding, setAdding] = useState(false);
+  const [changing, setChanging] = useState(false);
+  const [changed, setChanged] = useState(false);
   const { data, loading, error, reload } = useAsync(
     () => list(query(collection(db, 'users'), where('role', '==', 'PLATFORM_ADMIN'))), [],
   );
   return (
     <>
       <PageHeader title="Platform admins">
+        <Button onClick={() => { setChanged(false); setChanging(true); }}>Change my password</Button>
         <Button variant="primary" onClick={() => setAdding(true)}>Add platform admin</Button>
       </PageHeader>
-      <ChangePassword />
+      <Alert kind="ok">{changed && 'Password changed.'}</Alert>
       <div className="card">
         <h2>Platform admins</h2>
         <Alert kind="error">{error?.message}</Alert>
@@ -32,14 +35,15 @@ export default function PlatformAdmins() {
           ]} />
         )}
       </div>
+      {changing && <ChangePassword onClose={(saved) => { setChanging(false); setChanged(saved); }} />}
       {adding && <AddAdmin onClose={(saved) => { setAdding(false); if (saved) reload(); }} />}
     </>
   );
 }
 
-function ChangePassword() {
-  const { values, bind, set } = useForm({ current: '', next: '', again: '' });
-  const { busy, error, done, run } = useAction();
+function ChangePassword({ onClose }) {
+  const { values, bind } = useForm({ current: '', next: '', again: '' });
+  const { busy, error, run } = useAction();
   const submit = (e) => {
     e.preventDefault();
     run(async () => {
@@ -49,21 +53,24 @@ function ChangePassword() {
       // Firebase wants a fresh sign-in before it lets anyone change a password.
       await reauthenticateWithCredential(user, EmailAuthProvider.credential(user.email, values.current));
       await updatePassword(user, values.next);
-      set({ current: '', next: '', again: '' });
-    }, 'Password changed.');
+      onClose(true);
+    });
   };
   return (
-    <form className="card" onSubmit={submit}>
-      <h2>Change my password</h2>
-      <Alert kind="error">{error}</Alert>
-      <Alert kind="ok">{done}</Alert>
-      <div className="form-grid">
-        <Input label="Current password" type="password" autoComplete="current-password" required {...bind('current')} />
-        <Input label="New password" type="password" autoComplete="new-password" required {...bind('next')} />
-        <Input label="New password again" type="password" autoComplete="new-password" required {...bind('again')} />
-      </div>
-      <Button variant="primary" type="submit" disabled={busy}>{busy ? 'Saving…' : 'Change password'}</Button>
-    </form>
+    <Modal title="Change my password" onClose={() => onClose(false)}>
+      <form onSubmit={submit}>
+        <Alert kind="error">{error}</Alert>
+        <div className="form-grid">
+          <Input label="Current password" type="password" autoComplete="current-password" required {...bind('current')} />
+          <Input label="New password" type="password" autoComplete="new-password" required {...bind('next')} />
+          <Input label="New password again" type="password" autoComplete="new-password" required {...bind('again')} />
+        </div>
+        <div className="row">
+          <Button onClick={() => onClose(false)}>Cancel</Button>
+          <Button variant="primary" type="submit" disabled={busy}>{busy ? 'Saving…' : 'Change password'}</Button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 

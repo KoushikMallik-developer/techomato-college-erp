@@ -3,7 +3,7 @@ import { addDoc, limit, orderBy, query, serverTimestamp, updateDoc, where } from
 import { useCtx } from '../../app/AuthProvider';
 import { ROLES, isAdminRole, tcol, tdoc } from '../../lib/tenant';
 import { list } from '../../lib/data';
-import { Alert, Badge, Button, Input, Loading, Modal, PageHeader, Textarea, useAction, useAsync, useForm } from '../../components/ui';
+import { Alert, Badge, Button, Input, Loading, Modal, PageHeader, Textarea, useAction, useAsync, useConfirm, useForm } from '../../components/ui';
 
 const AUDIENCES = [ROLES.COLLEGE_ADMIN, ROLES.FACULTY, ROLES.STUDENT];
 
@@ -37,6 +37,7 @@ function AdminAnnouncements() {
   const [editing, setEditing] = useState(null);
   const { data, loading, error, reload } = useAsync(() => list(query(tcol(iid, 'announcements'), orderBy('publishedAt', 'desc'), limit(50))), [iid]);
   const action = useAction();
+  const confirm = useConfirm();
 
   const toggle = (a) =>
     action.run(async () => {
@@ -56,7 +57,9 @@ function AdminAnnouncements() {
             <h3>{a.title} <Badge kind={a.status === 'PUBLISHED' ? 'ok' : ''}>{a.status}</Badge></h3>
             <div className="row">
               <Button small onClick={() => setEditing(a)}>Edit</Button>
-              <Button small onClick={() => toggle(a)} disabled={action.busy}>{a.status === 'PUBLISHED' ? 'Archive' : 'Publish again'}</Button>
+              <Button small disabled={action.busy} onClick={() => (a.status === 'PUBLISHED'
+                ? confirm.ask({ title: `Archive "${a.title}"?`, body: 'It disappears from everyone\'s announcements. You can publish it again later.', label: 'Archive' }, () => toggle(a))
+                : toggle(a))}>{a.status === 'PUBLISHED' ? 'Archive' : 'Publish again'}</Button>
             </div>
           </div>
           <p style={{ whiteSpace: 'pre-wrap' }}>{a.body}</p>
@@ -64,6 +67,7 @@ function AdminAnnouncements() {
         </div>
       ))}
       {!loading && !data.length && <p className="muted">No announcements yet.</p>}
+      {confirm.dialog}
       {editing && <Editor a={editing} onClose={(saved) => { setEditing(null); if (saved) reload(); }} />}
     </>
   );
