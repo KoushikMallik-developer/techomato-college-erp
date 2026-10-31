@@ -104,6 +104,21 @@ describe('platform admin', () => {
     await assertSucceeds(b.commit());
   });
 
+  it('can add another platform admin, with an audit entry, and nobody else can', async () => {
+    const db = as('plat');
+    const b = writeBatch(db);
+    b.set(doc(db, 'platformAuditLogs', 'p3'), { actorUid: 'plat', timestamp: now() });
+    b.set(doc(db, 'users', 'plat2'), { institutionId: 'platform', role: 'PLATFORM_ADMIN', active: true, auditId: 'p3' });
+    await assertSucceeds(b.commit());
+
+    const noAudit = writeBatch(db);
+    noAudit.set(doc(db, 'users', 'plat3'), { institutionId: 'platform', role: 'PLATFORM_ADMIN', active: true, auditId: 'p3' });
+    await assertFails(noAudit.commit());
+
+    await assertSucceeds(getDocs(query(collection(db, 'users'), where('role', '==', 'PLATFORM_ADMIN'))));
+    await assertFails(getDocs(query(collection(as('sa1'), 'users'), where('role', '==', 'PLATFORM_ADMIN'))));
+  });
+
   it('cannot create a super admin for an existing college', async () => {
     const db = as('plat');
     const b = writeBatch(db);

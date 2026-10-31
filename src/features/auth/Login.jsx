@@ -4,6 +4,7 @@ import { sendPasswordResetEmail, signInWithEmailAndPassword } from 'firebase/aut
 import { auth } from '../../lib/firebase';
 import { Alert, Button, Input, useAction } from '../../components/ui';
 import { useCtx } from '../../app/AuthProvider';
+import { loginEmail } from '../../lib/calc';
 
 export default function Login() {
   const { error: accountError } = useCtx();
@@ -13,10 +14,10 @@ export default function Login() {
 
   const submit = (e) => {
     e.preventDefault();
-    run(() => signInWithEmailAndPassword(auth, email.trim(), password));
+    run(() => signInWithEmailAndPassword(auth, loginEmail(email), password));
   };
   const reset = () =>
-    run(() => sendPasswordResetEmail(auth, email.trim()), 'If that email has an account, a reset link is on its way.');
+    run(() => sendPasswordResetEmail(auth, loginEmail(email)),'If that email has an account, a reset link is on its way.');
 
   return (
     <div className="login">
@@ -27,7 +28,7 @@ export default function Login() {
         <Alert kind="error">{error || accountError}</Alert>
         <Alert kind="ok">{done}</Alert>
         <div className="form-grid" style={{ flexDirection: 'column' }}>
-          <Input label="Email" type="email" autoComplete="username" required value={email} onChange={setEmail} />
+          <Input label="Email or username" autoComplete="username" required value={email} onChange={setEmail} />
           <Input label="Password" type="password" autoComplete="current-password" required value={password} onChange={setPassword} />
           <Button variant="primary" type="submit" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</Button>
           <Button onClick={reset} disabled={busy || !email}>Forgot password? Email me a reset link</Button>

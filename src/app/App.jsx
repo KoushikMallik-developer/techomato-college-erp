@@ -8,6 +8,7 @@ import Login from '../features/auth/Login';
 const Landing = lazy(() => import('../features/landing/Landing'));
 const Dashboard = lazy(() => import('../features/dashboard/Dashboard'));
 const Colleges = lazy(() => import('../features/platform/Colleges'));
+const PlatformAdmins = lazy(() => import('../features/platform/PlatformAdmins'));
 const Students = lazy(() => import('../features/students/Students'));
 const StudentDetail = lazy(() => import('../features/students/StudentDetail'));
 const Faculty = lazy(() => import('../features/faculty/Faculty'));
@@ -23,7 +24,7 @@ const Settings = lazy(() => import('../features/users/Settings'));
 const Profile = lazy(() => import('../features/users/Profile'));
 
 function navFor(role) {
-  if (role === ROLES.PLATFORM_ADMIN) return [['/', 'Colleges']];
+  if (role === ROLES.PLATFORM_ADMIN) return [['/', 'Colleges'], ['/admins', 'Platform admins']];
   const common = [['/', 'Dashboard']];
   if (isAdminRole(role)) {
     return [
@@ -72,7 +73,10 @@ function Shell() {
         <Suspense fallback={<Loading />}>
         <Routes>
           {role === ROLES.PLATFORM_ADMIN ? (
-            <Route path="/" element={<Colleges />} />
+            <>
+              <Route path="/" element={<Colleges />} />
+              <Route path="/admins" element={<PlatformAdmins />} />
+            </>
           ) : (
             <>
               <Route path="/" element={<Dashboard />} />

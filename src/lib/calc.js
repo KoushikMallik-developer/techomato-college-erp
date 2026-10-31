@@ -108,5 +108,11 @@ export function todayIn(timeZone, now = new Date()) {
   return new Intl.DateTimeFormat('en-CA', { timeZone }).format(now);
 }
 
-export const csvEscape = (v) => `"${String(v ?? '').replaceAll('"', '""')}"`;
+// Firebase Auth signs in by email. A bare username such as "admin" maps to a fixed fake address.
+export const loginEmail = (s) => {
+  const v = s.trim().toLowerCase();
+  return v.includes('@') ? v : `${v}@techomato.local`;
+};
+
+export const csvEscape =(v) => `"${String(v ?? '').replaceAll('"', '""')}"`;
 export const toCsv = (rows) => rows.map((r) => r.map(csvEscape).join(',')).join('\n');

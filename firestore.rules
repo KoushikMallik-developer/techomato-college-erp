@@ -44,8 +44,11 @@ service cloud.firestore {
       allow read: if request.auth != null && (request.auth.uid == uid || platform()
         || isAdmin(resource.data.institutionId));
       allow create: if
-        // Platform Admin: only the first Super Admin, only in the batch that creates the college.
-        (platform() && request.resource.data.role == 'SUPER_ADMIN'
+        // Platform Admin: another Platform Admin, or the first Super Admin in the batch that creates the college.
+        (platform() && request.resource.data.role == 'PLATFORM_ADMIN'
+          && request.resource.data.institutionId == 'platform'
+          && newPlatformAudit(request.resource.data.auditId))
+        || (platform() && request.resource.data.role == 'SUPER_ADMIN'
           && !exists(/databases/$(database)/documents/institutions/$(request.resource.data.institutionId))
           && existsAfter(/databases/$(database)/documents/institutions/$(request.resource.data.institutionId))
           && newPlatformAudit(request.resource.data.auditId))

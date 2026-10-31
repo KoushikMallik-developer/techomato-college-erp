@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { attendanceBySubject, checkExam, groupByCost, computeResult, enrollmentKey, percent, planAttendanceWrites, recordKey, roomKey, todayIn, validTimeZone } from '../src/lib/calc';
+import { attendanceBySubject, checkExam, groupByCost, computeResult, enrollmentKey, percent, planAttendanceWrites, loginEmail, recordKey, roomKey, todayIn, validTimeZone } from '../src/lib/calc';
 
 describe('attendance', () => {
   it('excludes leave from the percentage', () => {
@@ -102,5 +102,12 @@ describe('batch grouping', () => {
     expect(groups.flat().map((i) => i.id)).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
     expect(groupByCost([], 4)).toEqual([]);
     expect(groupByCost([{ cost: 9 }], 4)).toHaveLength(1); // one oversized item still gets its own batch
+  });
+});
+
+describe('login name', () => {
+  it('maps a bare username to a fixed address and leaves emails alone', () => {
+    expect(loginEmail(' Admin ')).toBe('admin@techomato.local');
+    expect(loginEmail('A@B.com')).toBe('a@b.com');
   });
 });
