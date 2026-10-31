@@ -7,3 +7,4 @@ backups/
 service-account*.json
 .wrangler
 .firebase
+.vercel

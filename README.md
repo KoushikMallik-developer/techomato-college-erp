@@ -47,9 +47,10 @@ The rules tests cover tenant isolation, role limits, audit-entry reuse, attendan
 ## Deploy
 
 1. **Firebase (Spark):** create a project, enable Email/Password sign-in, create Firestore in production mode. Put the project ID in `.firebaserc` and the web config in `.env`. Then `npx firebase deploy --only firestore,hosting` after `npm run build`.
-2. **First Platform Admin:** run `scripts/create-platform-admin.js` with a service-account key stored outside this repo.
-3. **App Check:** register the web app with reCAPTCHA v3 in the Firebase console and put the site key in `VITE_APPCHECK_SITE_KEY`. Watch it in monitor mode first. The Firebase SDK attaches the token to every Firestore call, so enforcing it later does not break file access. For local work, leave the site key empty in `.env` (reCAPTCHA only issues tokens for registered domains), or set a debug token in the browser as the Firebase App Check docs describe.
-4. **Backups:** none, by decision. Spark has no managed backups.
+2. **Vercel (optional, instead of Firebase Hosting):** Firebase still provides Auth and Firestore, so deploy the rules with `npx firebase deploy --only "firestore"`. Import the repo in Vercel (framework Vite; [vercel.json](vercel.json) sets the build, the rewrite for page reloads and the security headers). Add the `VITE_*` values from `.env.example` under Project Settings, Environment Variables, with `VITE_USE_EMULATOR` set to `false`. Then add the Vercel domain in Firebase console, Authentication, Settings, Authorized domains, or sign-in fails. If you use App Check, register that domain for the reCAPTCHA key too.
+3. **First Platform Admin:** run `scripts/create-platform-admin.js` with a service-account key stored outside this repo.
+4. **App Check:** register the web app with reCAPTCHA v3 in the Firebase console and put the site key in `VITE_APPCHECK_SITE_KEY`. Watch it in monitor mode first. The Firebase SDK attaches the token to every Firestore call, so enforcing it later does not break file access. For local work, leave the site key empty in `.env` (reCAPTCHA only issues tokens for registered domains), or set a debug token in the browser as the Firebase App Check docs describe.
+5. **Backups:** none, by decision. Spark has no managed backups.
 
 ## Limits you should know
 
