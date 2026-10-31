@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { attendanceBySubject, computeResult, enrollmentKey, percent, recordKey, roomKey, todayIn, validTimeZone } from '../src/lib/calc';
+import { attendanceBySubject, computeResult, enrollmentKey, percent, planAttendanceWrites, recordKey, roomKey, todayIn, validTimeZone } from '../src/lib/calc';
 
 describe('attendance', () => {
   it('excludes leave from the percentage', () => {
@@ -56,5 +56,19 @@ describe('keys', () => {
   it('rejects a time zone typo before it is saved', () => {
     expect(validTimeZone('Asia/Kolkata')).toBe(true);
     expect(validTimeZone('Asia/Calcutta1')).toBe(false);
+  });
+});
+
+describe('attendance write plan', () => {
+  it('creates, adds, edits, and skips unchanged marks', () => {
+    const roster = [1, 2, 3, 4].map((n) => ({ studentId: `s${n}` }));
+    const saved = {
+      s2: { records: { d1_1: 'PRESENT' } },
+      s3: { records: { d2_1: 'PRESENT' } },
+      s4: { records: { d2_1: 'ABSENT' } },
+    };
+    const plan = planAttendanceWrites(roster, saved, 'd2_1', () => 'ABSENT');
+    expect(plan.map((p) => [p.student.studentId, p.kind])).toEqual([['s1', 'create'], ['s2', 'add'], ['s3', 'edit']]);
+    expect(plan[2].old).toBe('PRESENT');
   });
 });

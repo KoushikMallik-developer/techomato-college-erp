@@ -249,6 +249,8 @@ service cloud.firestore {
       match /examSubjects/{id} {
         allow create, update: if isAdmin(iid)
           && get(/databases/$(database)/documents/institutions/$(iid)/exams/$(request.resource.data.examId)).data.status == 'DRAFT';
+        allow delete: if isAdmin(iid)
+          && get(/databases/$(database)/documents/institutions/$(iid)/exams/$(resource.data.examId)).data.status == 'DRAFT';
       }
 
       match /studentMarks/{id} {

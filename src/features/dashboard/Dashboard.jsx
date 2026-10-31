@@ -1,4 +1,4 @@
-import { getCountFromServer, limit, orderBy, query, where } from 'firebase/firestore';
+import { getCountFromServer, query, where } from 'firebase/firestore';
 import { useCtx } from '../../app/AuthProvider';
 import { tcol, isAdminRole, ROLES } from '../../lib/tenant';
 import { attendanceBySubject, percent } from '../../lib/calc';

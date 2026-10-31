@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { collection, doc, getDocs, orderBy, query, serverTimestamp, writeBatch } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, orderBy, query, serverTimestamp, writeBatch } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { useCtx } from '../../app/AuthProvider';
 import { platformAudit } from '../../lib/audit';
@@ -70,6 +70,8 @@ function CreateCollege({ onClose }) {
       if (!validTimeZone(values.timezone.trim())) throw new Error('That is not a valid time zone name (example: Asia/Kolkata).');
       const iid = slug(values.code);
       if (!iid) throw new Error('Enter a college code using letters or numbers.');
+      // Check first: a taken code must not leave an orphaned login behind.
+      if ((await getDoc(doc(db, 'institutions', iid))).exists()) throw new Error('That college code is already taken.');
       const email = values.adminEmail.trim().toLowerCase();
       const adminUid = (uidCache.current[email] ??= await createAuthUser(email));
       const batch = writeBatch(db);

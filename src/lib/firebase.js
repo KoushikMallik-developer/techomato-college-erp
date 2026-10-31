@@ -1,6 +1,7 @@
 import { initializeApp, getApps } from 'firebase/app';
 import { getAuth, connectAuthEmulator } from 'firebase/auth';
 import { getFirestore, connectFirestoreEmulator } from 'firebase/firestore';
+import { initializeAppCheck, ReCaptchaV3Provider } from 'firebase/app-check';
 
 const env = import.meta.env;
 const config = {
@@ -14,6 +15,11 @@ const useEmulator = env.VITE_USE_EMULATOR === 'true';
 export const app = initializeApp(config);
 export const auth = getAuth(app);
 export const db = getFirestore(app);
+
+// Needed before App Check is set to "enforced" in the console; skipped when no site key is set.
+export const appCheck = env.VITE_APPCHECK_SITE_KEY && !useEmulator
+  ? initializeAppCheck(app, { provider: new ReCaptchaV3Provider(env.VITE_APPCHECK_SITE_KEY), isTokenAutoRefreshEnabled: true })
+  : null;
 
 if (useEmulator) {
   connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });

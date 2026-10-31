@@ -5,6 +5,20 @@ export const STATUSES = ['PRESENT', 'ABSENT', 'LEAVE'];
 // Attendance map key: d{YYYYMMDD}_{period}. Valid as a Firestore field path.
 export const recordKey = (date, period) => `d${date.replaceAll('-', '')}_${period}`;
 
+// Per student, how today's mark is written: create the document, add an entry, or edit an existing
+// entry (an edit needs its own audit entry). Unchanged marks are skipped.
+export function planAttendanceWrites(roster, saved, key, statusOf) {
+  const plan = [];
+  for (const student of roster) {
+    const next = statusOf(student);
+    const doc = saved[student.studentId];
+    if (!doc) plan.push({ student, next, kind: 'create' });
+    else if (doc.records[key] === undefined) plan.push({ student, next, kind: 'add' });
+    else if (doc.records[key] !== next) plan.push({ student, next, kind: 'edit', old: doc.records[key] });
+  }
+  return plan;
+}
+
 export const enrollmentKey = (number) => number.trim().toUpperCase();
 export const roomKey = (room) => room.trim().toLowerCase();
 

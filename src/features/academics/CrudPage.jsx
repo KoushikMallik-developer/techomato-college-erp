@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { addDoc, doc, orderBy, query, serverTimestamp, updateDoc } from 'firebase/firestore';
+import { addDoc, orderBy, query, serverTimestamp, updateDoc } from 'firebase/firestore';
 import { useCtx } from '../../app/AuthProvider';
 import { tcol, tdoc } from '../../lib/tenant';
 import { byId, list } from '../../lib/data';
@@ -71,7 +71,6 @@ function RecordForm({ config, record, lookups, onClose }) {
         const src = lookups[f.name][data[f.name]];
         if (src && f.copy) for (const [to, from] of Object.entries(f.copy)) data[to] = src[from];
       }
-      if (config.beforeSave) Object.assign(data, config.beforeSave(data, lookups));
       if (record.id) await updateDoc(tdoc(iid, config.collection, record.id), { ...data, updatedAt: serverTimestamp() });
       else await addDoc(tcol(iid, config.collection), { ...data, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
       onClose(true);

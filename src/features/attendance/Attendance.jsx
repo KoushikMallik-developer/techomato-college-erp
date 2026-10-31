@@ -1,10 +1,10 @@
 import { useState } from 'react';
-import { doc, query, serverTimestamp, where, writeBatch } from 'firebase/firestore';
+import { query, serverTimestamp, where, writeBatch } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { useCtx } from '../../app/AuthProvider';
-import { ROLES, isAdminRole, tcol, tdoc } from '../../lib/tenant';
+import { ROLES, tcol, tdoc } from '../../lib/tenant';
 import { audit } from '../../lib/audit';
-import { STATUSES, attendanceBySubject, percent, recordKey, toCsv } from '../../lib/calc';
+import { STATUSES, attendanceBySubject, percent, planAttendanceWrites, recordKey, toCsv } from '../../lib/calc';
 import { byId, chunk, list } from '../../lib/data';
 import { Alert, Badge, Button, Input, Loading, PageHeader, Select, Table, Tabs, downloadCsv, useAction, useAsync } from '../../components/ui';
 
@@ -87,27 +87,22 @@ function Register({ a, date, period, ctx }) {
 
   const save = () =>
     run(async () => {
-      const writes = [];
-      for (const s of data.roster) {
-        const next = statusOf(s);
-        const doc0 = data.saved[s.studentId];
+      const writes = planAttendanceWrites(data.roster, data.saved, key, statusOf).map(({ student: s, next, kind, old }) => {
         const ref = tdoc(ctx.iid, 'studentAttendance', `${s.studentId}_${a.id}`);
         const stamp = { updatedBy: ctx.uid, updatedAt: serverTimestamp() };
-        if (!doc0) {
-          writes.push((b) => b.set(ref, {
+        if (kind === 'create') {
+          return (b) => b.set(ref, {
             studentId: s.studentId, subjectId: a.subjectId, semesterId: a.semesterId, sectionId: a.sectionId,
             assignmentId: a.id, facultyId: a.facultyId, records: { [key]: next }, createdAt: serverTimestamp(), ...stamp,
-          }));
-        } else if (doc0.records[key] === undefined) {
-          writes.push((b) => b.update(ref, { [`records.${key}`]: next, ...stamp }));
-        } else if (doc0.records[key] !== next) {
-          // Changing an existing mark: each edit gets its own new audit entry with the old and new value.
-          writes.push((b) => {
-            const auditId = audit(b, ctx, 'ATTENDANCE_EDIT', 'studentAttendance', ref.id, { key, old: doc0.records[key], new: next });
-            b.update(ref, { [`records.${key}`]: next, ...stamp, auditId });
           });
         }
-      }
+        if (kind === 'add') return (b) => b.update(ref, { [`records.${key}`]: next, ...stamp });
+        // Changing an existing mark: each edit gets its own new audit entry with the old and new value.
+        return (b) => {
+          const auditId = audit(b, ctx, 'ATTENDANCE_EDIT', 'studentAttendance', ref.id, { key, old, new: next });
+          b.update(ref, { [`records.${key}`]: next, ...stamp, auditId });
+        };
+      });
       const counts = { PRESENT: 0, ABSENT: 0, LEAVE: 0 };
       data.roster.forEach((s) => counts[statusOf(s)]++);
       const session = {

@@ -19,7 +19,7 @@ function corsHeaders(request, env) {
   if (!origin || origin !== env.ALLOWED_ORIGIN) return {};
   return {
     'access-control-allow-origin': origin,
-    'access-control-allow-headers': 'authorization, content-type',
+    'access-control-allow-headers': 'authorization, content-type, x-firebase-appcheck',
     'access-control-allow-methods': 'GET, PUT, DELETE, OPTIONS',
     vary: 'origin',
   };
@@ -32,10 +32,11 @@ function uidFromToken(token) {
   return claims.user_id ?? claims.sub;
 }
 
-async function readMetadata(env, token, iid, collection, owner, docId) {
+async function readMetadata(env, token, appCheck, iid, collection, owner, docId) {
   const path = KINDS[collection](owner, docId);
   const url = `https://firestore.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents/institutions/${iid}/${path}`;
-  const res = await fetch(url, { headers: { authorization: `Bearer ${token}` } });
+  const headers = { authorization: `Bearer ${token}`, ...(appCheck && { 'x-firebase-appcheck': appCheck }) };
+  const res = await fetch(url, { headers });
   if (!res.ok) return null; // Firestore refused (or no such document): treat as forbidden
   const { fields } = await res.json();
   const s = (k) => fields[k]?.stringValue;
@@ -64,7 +65,7 @@ export async function handle(request, env) {
   if (!auth.startsWith('Bearer ')) return json({ error: 'login required' }, 401, cors);
   const token = auth.slice(7);
 
-  const meta = await readMetadata(env, token, iid, collection, owner, docId);
+  const meta = await readMetadata(env, token, request.headers.get('x-firebase-appcheck'), iid, collection, owner, docId);
   if (!meta) return json({ error: 'forbidden' }, 403, cors);
 
   // The object key always comes from the URL path and must match the metadata.

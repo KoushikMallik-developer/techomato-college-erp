@@ -1,8 +1,8 @@
 import { useState } from 'react';
-import { addDoc, getDoc, orderBy, query, serverTimestamp, setDoc, where, writeBatch } from 'firebase/firestore';
+import { addDoc, deleteDoc, getDoc, orderBy, query, serverTimestamp, setDoc, where, writeBatch } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { useCtx } from '../../app/AuthProvider';
-import { ROLES, isAdminRole, tcol, tdoc } from '../../lib/tenant';
+import { ROLES, tcol, tdoc } from '../../lib/tenant';
 import { audit } from '../../lib/audit';
 import { computeResult, toCsv } from '../../lib/calc';
 import { byId, chunk, list } from '../../lib/data';
@@ -83,18 +83,39 @@ function CreateExam({ onClose }) {
   );
 }
 
+async function loadExam(iid, exam) {
+  const [examSubjects, subjects, enrollments, marks, semester] = await Promise.all([
+    list(query(tcol(iid, 'examSubjects'), where('examId', '==', exam.id))),
+    list(query(tcol(iid, 'subjects'), where('courseId', '==', exam.courseId))),
+    list(query(tcol(iid, 'enrollments'), where('semesterId', '==', exam.semesterId))),
+    list(query(tcol(iid, 'studentMarks'), where('examId', '==', exam.id))),
+    getDoc(tdoc(iid, 'semesters', exam.semesterId)),
+  ]);
+  // Only subjects of this exam's semester can be papers: nobody teaches the others here.
+  const ofSemester = subjects.filter((s) => s.semesterNumber === semester.data()?.number);
+  return { examSubjects, subjects: ofSemester, enrollments: enrollments.filter((e) => e.status !== 'WITHDRAWN'), marks, S: byId(ofSemester) };
+}
+
+// Every enrolled student needs a marks record (or an absent mark) for every paper before publishing.
+function checkExam(data) {
+  const marksById = byId(data.marks);
+  const gaps = [];
+  const wrongSection = [];
+  for (const en of data.enrollments) {
+    for (const es of data.examSubjects) {
+      const m = marksById[`${es.id}_${en.studentId}`];
+      const who = `${en.enrollmentNumber} ${en.studentName}`;
+      if (!m) gaps.push({ id: `${en.studentId}${es.id}`, student: who, paper: es.subjectName });
+      else if (m.sectionId !== en.sectionId) wrongSection.push({ id: m.id, student: who, paper: es.subjectName });
+    }
+  }
+  return { marksById, gaps, wrongSection };
+}
+
 function ExamManager({ exam, onChange }) {
   const { iid, uid } = useCtx();
   const draft = exam.status === 'DRAFT';
-  const { data, loading, error, reload } = useAsync(async () => {
-    const [examSubjects, subjects, enrollments, marks] = await Promise.all([
-      list(query(tcol(iid, 'examSubjects'), where('examId', '==', exam.id))),
-      list(query(tcol(iid, 'subjects'), where('courseId', '==', exam.courseId))),
-      list(query(tcol(iid, 'enrollments'), where('semesterId', '==', exam.semesterId))),
-      list(query(tcol(iid, 'studentMarks'), where('examId', '==', exam.id))),
-    ]);
-    return { examSubjects, subjects, enrollments: enrollments.filter((e) => e.status !== 'WITHDRAWN'), marks, S: byId(subjects) };
-  }, [exam.id, exam.status]);
+  const { data, loading, error, reload } = useAsync(() => loadExam(iid, exam), [exam.id, exam.status]);
   const { values, bind } = useForm({ subjectId: '', maxMarks: '', passMarks: '' });
   const action = useAction();
 
@@ -114,23 +135,27 @@ function ExamManager({ exam, onChange }) {
     });
   };
 
-  // Every enrolled student needs a marks record (or an absent mark) for every paper before publishing.
-  const marksById = byId(data.marks);
-  const gaps = [];
-  const wrongSection = [];
-  for (const en of data.enrollments) {
-    for (const es of data.examSubjects) {
-      const m = marksById[`${es.id}_${en.studentId}`];
-      if (!m) gaps.push({ id: `${en.studentId}${es.id}`, student: `${en.enrollmentNumber} ${en.studentName}`, paper: es.subjectName });
-      else if (m.sectionId !== en.sectionId) wrongSection.push({ id: m.id, student: `${en.enrollmentNumber} ${en.studentName}`, paper: es.subjectName });
-    }
-  }
+  const { gaps, wrongSection } = checkExam(data);
   const resultCount = data.enrollments.length;
+
+  const removePaper = (es) =>
+    action.run(async () => {
+      await deleteDoc(tdoc(iid, 'examSubjects', es.id));
+      reload();
+    });
 
   const publish = () =>
     action.run(async () => {
-      const results = data.enrollments.map((en) => {
-        const papers = data.examSubjects.map((es) => {
+      // Re-read everything now: a teacher may have corrected marks since this screen loaded.
+      const fresh = await loadExam(iid, exam);
+      const check = checkExam(fresh);
+      if (check.gaps.length || check.wrongSection.length) {
+        reload();
+        throw new Error('Marks changed since this screen loaded. Review the list below and try again.');
+      }
+      const marksById = check.marksById;
+      const results = fresh.enrollments.map((en) => {
+        const papers = fresh.examSubjects.map((es) => {
           const m = marksById[`${es.id}_${en.studentId}`];
           return { name: es.subjectName, marks: m.absent ? 0 : m.marks, absent: !!m.absent, maxMarks: es.maxMarks, passMarks: es.passMarks };
         });
@@ -191,6 +216,7 @@ function ExamManager({ exam, onChange }) {
         rows={data.examSubjects}
         empty="No papers yet."
         columns={[{ key: 'subjectName', label: 'Subject' }, { key: 'maxMarks', label: 'Max marks' }, { key: 'passMarks', label: 'Pass marks' }]}
+        actions={draft ? (es) => <Button small variant="danger" disabled={action.busy} onClick={() => removePaper(es)}>Remove paper</Button> : undefined}
       />
       {draft && (
         <form className="row" onSubmit={addSubject} style={{ margin: '12px 0' }}>

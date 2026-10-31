@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { addDoc, doc, limit, orderBy, query, serverTimestamp, updateDoc, where } from 'firebase/firestore';
+import { addDoc, limit, orderBy, query, serverTimestamp, updateDoc, where } from 'firebase/firestore';
 import { useCtx } from '../../app/AuthProvider';
 import { ROLES, isAdminRole, tcol, tdoc } from '../../lib/tenant';
 import { list } from '../../lib/data';

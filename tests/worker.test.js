@@ -93,4 +93,10 @@ describe('file worker', () => {
     firestore(metadata({ objectKey: { stringValue: 'other/students/s1/f01' }, status: { stringValue: 'READY' } }));
     expect((await handle(req('GET'), env(bucket()))).status).toBe(403);
   });
+
+  it('passes the App Check token on to Firestore', async () => {
+    firestore(metadata({ status: { stringValue: 'READY' } }));
+    await handle(req('GET', { 'x-firebase-appcheck': 'tok123' }), env(bucket()));
+    expect(fetch.mock.calls[0][1].headers['x-firebase-appcheck']).toBe('tok123');
+  });
 });

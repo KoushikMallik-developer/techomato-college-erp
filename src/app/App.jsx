@@ -1,24 +1,24 @@
-import { useState } from 'react';
+import { Suspense, lazy, useState } from 'react';
 import { NavLink, Navigate, Route, Routes } from 'react-router-dom';
 import { useCtx } from './AuthProvider';
 import { Button, Loading } from '../components/ui';
 import { ROLES, isAdminRole } from '../lib/tenant';
 import Login from '../features/auth/Login';
-import Dashboard from '../features/dashboard/Dashboard';
-import Colleges from '../features/platform/Colleges';
-import Students from '../features/students/Students';
-import StudentDetail from '../features/students/StudentDetail';
-import Faculty from '../features/faculty/Faculty';
-import FacultyDetail from '../features/faculty/FacultyDetail';
-import Academics from '../features/academics/Academics';
-import Timetable from '../features/academics/Timetable';
-import Attendance from '../features/attendance/Attendance';
-import Exams from '../features/exams/Exams';
-import Materials from '../features/materials/Materials';
-import Announcements from '../features/announcements/Announcements';
-import Users from '../features/users/Users';
-import Settings from '../features/users/Settings';
-import Profile from '../features/users/Profile';
+const Dashboard = lazy(() => import('../features/dashboard/Dashboard'));
+const Colleges = lazy(() => import('../features/platform/Colleges'));
+const Students = lazy(() => import('../features/students/Students'));
+const StudentDetail = lazy(() => import('../features/students/StudentDetail'));
+const Faculty = lazy(() => import('../features/faculty/Faculty'));
+const FacultyDetail = lazy(() => import('../features/faculty/FacultyDetail'));
+const Academics = lazy(() => import('../features/academics/Academics'));
+const Timetable = lazy(() => import('../features/academics/Timetable'));
+const Attendance = lazy(() => import('../features/attendance/Attendance'));
+const Exams = lazy(() => import('../features/exams/Exams'));
+const Materials = lazy(() => import('../features/materials/Materials'));
+const Announcements = lazy(() => import('../features/announcements/Announcements'));
+const Users = lazy(() => import('../features/users/Users'));
+const Settings = lazy(() => import('../features/users/Settings'));
+const Profile = lazy(() => import('../features/users/Profile'));
 
 function navFor(role) {
   if (role === ROLES.PLATFORM_ADMIN) return [['/', 'Colleges']];
@@ -65,6 +65,7 @@ function Shell() {
         </div>
       </aside>
       <main className="main">
+        <Suspense fallback={<Loading />}>
         <Routes>
           {role === ROLES.PLATFORM_ADMIN ? (
             <Route path="/" element={<Colleges />} />
@@ -88,6 +89,7 @@ function Shell() {
           )}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
+        </Suspense>
       </main>
     </div>
   );

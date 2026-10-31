@@ -400,6 +400,8 @@ describe('admin clean-up, locks after publish, and the rest of the rules', () =>
     await assertSucceeds(setDoc(doc(as('ca1'), ...P('c1', 'examSubjects', 'es9')), { examId: 'e1', subjectId: 'sub9', maxMarks: 50 }));
     await assertFails(setDoc(doc(as('ca1'), ...P('c1', 'examSubjects', 'es8')), { examId: 'e2', subjectId: 'sub9', maxMarks: 50 }));
     await assertFails(updateDoc(doc(as('ca1'), ...P('c1', 'examSubjects', 'es2')), { maxMarks: 10 }));
+    await assertSucceeds(deleteDoc(doc(as('ca1'), ...P('c1', 'examSubjects', 'es1'))));
+    await assertFails(deleteDoc(doc(as('ca1'), ...P('c1', 'examSubjects', 'es2'))));
   });
 
   it('class sessions: only the assigned teacher, with the right id', async () => {

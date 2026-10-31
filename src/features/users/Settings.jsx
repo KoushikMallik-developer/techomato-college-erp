@@ -1,7 +1,5 @@
-import { serverTimestamp, updateDoc } from 'firebase/firestore';
+import { doc, serverTimestamp, updateDoc } from 'firebase/firestore';
 import { useCtx } from '../../app/AuthProvider';
-import { tdoc } from '../../lib/tenant';
-import { doc } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { validTimeZone } from '../../lib/calc';
 import { Alert, Button, Input, PageHeader, useAction, useForm } from '../../components/ui';

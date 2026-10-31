@@ -17,11 +17,6 @@
       ]
     },
     {
-      "collectionGroup": "classSessions",
-      "queryScope": "COLLECTION",
-      "fields": [{ "fieldPath": "date", "order": "ASCENDING" }]
-    },
-    {
       "collectionGroup": "announcements",
       "queryScope": "COLLECTION",
       "fields": [
@@ -30,9 +25,12 @@
       ]
     },
     {
-      "collectionGroup": "auditLogs",
+      "collectionGroup": "users",
       "queryScope": "COLLECTION",
-      "fields": [{ "fieldPath": "timestamp", "order": "DESCENDING" }]
+      "fields": [
+        { "fieldPath": "institutionId", "order": "ASCENDING" },
+        { "fieldPath": "updatedAt", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": [
@@ -40,6 +38,14 @@
       "collectionGroup": "studentAttendance",
       "fieldPath": "records",
       "indexes": []
+    },
+    {
+      "collectionGroup": "documents",
+      "fieldPath": "objectKey",
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION" },
+        { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }
+      ]
     }
   ]
 }

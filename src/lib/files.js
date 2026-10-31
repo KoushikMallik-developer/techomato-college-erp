@@ -1,5 +1,6 @@
 import { doc, serverTimestamp, setDoc, updateDoc, deleteDoc, query, orderBy } from 'firebase/firestore';
-import { auth } from './firebase';
+import { getToken } from 'firebase/app-check';
+import { appCheck, auth } from './firebase';
 import { tcol, tdoc } from './tenant';
 import { list } from './data';
 
@@ -19,10 +20,12 @@ export const listFiles = (iid, collection, ownerId) =>
 async function call(method, iid, collection, ownerId, docId, init = {}) {
   if (!BASE) throw new Error('The file service is not configured (VITE_FILES_URL).');
   const token = await auth.currentUser.getIdToken();
+  // The Worker passes this on to Firestore, which refuses calls without it once App Check is enforced.
+  const checked = appCheck ? { 'x-firebase-appcheck': (await getToken(appCheck)).token } : {};
   const res = await fetch(`${BASE}/files/${iid}/${collection}/${ownerId}/${docId}`, {
     method,
     ...init,
-    headers: { authorization: `Bearer ${token}`, ...init.headers },
+    headers: { authorization: `Bearer ${token}`, ...checked, ...init.headers },
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
