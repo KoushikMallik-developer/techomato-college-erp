@@ -16,7 +16,7 @@ export const app = initializeApp(config);
 export const auth = getAuth(app);
 export const db = getFirestore(app);
 
-// Needed before App Check is set to "enforced" in the console; skipped when no site key is set.
+// App Check: the SDK attaches its token to Firestore calls. Skipped when no site key is set.
 export const appCheck = env.VITE_APPCHECK_SITE_KEY && !useEmulator
   ? initializeAppCheck(app, { provider: new ReCaptchaV3Provider(env.VITE_APPCHECK_SITE_KEY), isTokenAutoRefreshEnabled: true })
   : null;

@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { useCtx } from '../app/AuthProvider';
 import { Alert, Badge, Button, Input, Loading, Table, useAction, useAsync } from './ui';
-import { ACCEPT, KINDS, downloadFile, listFiles, removeFile, uploadFile } from '../lib/files';
+import { ACCEPT, MAX_BYTES, downloadFile, listFiles, removeFile, uploadFile } from '../lib/files';
 
 // canUpload: may add files. canRemove(file): may remove a given file.
 export default function FilePanel({ collection, ownerId, kind = 'DOCUMENT', canUpload, canRemove = () => canUpload }) {
@@ -10,7 +10,6 @@ export default function FilePanel({ collection, ownerId, kind = 'DOCUMENT', canU
   const action = useAction();
   const [title, setTitle] = useState('');
   const input = useRef();
-  const max = KINDS[collection].max / 1048576;
 
   if (loading) return <Loading />;
   const upload = (e) => {
@@ -33,7 +32,7 @@ export default function FilePanel({ collection, ownerId, kind = 'DOCUMENT', canU
         <form className="row" onSubmit={upload} style={{ marginBottom: 12 }}>
           <Input label="Title" value={title} onChange={setTitle} hint="Shown in the list" />
           <label className="field">
-            <span>File (PDF, JPEG or PNG, up to {max} MB)</span>
+            <span>File (PDF, JPEG or PNG, up to {Math.round(MAX_BYTES / 1024)} KB; big photos are shrunk for you)</span>
             <input type="file" accept={ACCEPT.join(',')} ref={input} required />
           </label>
           <Button variant="primary" type="submit" disabled={action.busy}>{action.busy ? 'Uploading…' : 'Upload'}</Button>

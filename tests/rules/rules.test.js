@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs';
 import { afterAll, beforeAll, beforeEach, describe, it } from 'vitest';
 import { assertFails, assertSucceeds, initializeTestEnvironment } from '@firebase/rules-unit-testing';
-import { collection, deleteDoc, doc, getDoc, getDocs, query, serverTimestamp, setDoc, updateDoc, where, writeBatch } from 'firebase/firestore';
+import { Bytes, collection, deleteDoc, doc, getDoc, getDocs, query, serverTimestamp, setDoc, updateDoc, where, writeBatch } from 'firebase/firestore';
 
 let env;
 const P = (iid, ...rest) => ['institutions', iid, ...rest];
@@ -343,11 +343,12 @@ describe('timetable locks and enrollment numbers', () => {
 describe('files and audit', () => {
   const fileDoc = (owner, slotId) => doc(as('ca1'), ...P('c1', 'students', owner, 'documents', slotId));
   const meta = (slotId, over = {}) => ({
-    objectKey: `c1/students/s1/${slotId}`, uploadedBy: 'ca1', status: 'PENDING', size: 1000, contentType: 'application/pdf', ...over,
+    uploadedBy: 'ca1', status: 'PENDING', size: 1000, contentType: 'application/pdf', ...over,
   });
 
   it('only fixed slot ids are accepted, which caps the files per folder', async () => {
     await assertSucceeds(setDoc(fileDoc('s1', 'f01'), meta('f01')));
+    await assertFails(setDoc(fileDoc('s1', 'f06'), meta('f06'))); // only f01-f05
     await assertFails(setDoc(fileDoc('s1', 'f21'), meta('f21')));
     await assertFails(setDoc(fileDoc('s1', 'abc'), meta('abc')));
     await assertFails(setDoc(fileDoc('s1', 'f02'), meta('f02', { size: 2000000 })));
@@ -374,20 +375,20 @@ describe('files and audit', () => {
   });
 
   it('class materials: enrolled students read, withdrawn ones do not, a replaced teacher cannot upload', async () => {
-    const m = (db) => doc(db, ...P('c1', 'teachingAssignments', 'a1', 'documents', 'm001'));
-    const mmeta = { objectKey: 'c1/teachingAssignments/a1/m001', uploadedBy: 'fac1', status: 'PENDING', size: 1000, contentType: 'application/pdf' };
+    const m = (db) => doc(db, ...P('c1', 'teachingAssignments', 'a1', 'documents', 'm01'));
+    const mmeta = { uploadedBy: 'fac1', status: 'PENDING', size: 1000, contentType: 'application/pdf' };
     await assertSucceeds(setDoc(m(as('fac1')), mmeta));
-    await assertFails(setDoc(doc(as('fac2'), ...P('c1', 'teachingAssignments', 'a1', 'documents', 'm002')), { ...mmeta, objectKey: 'c1/teachingAssignments/a1/m002', uploadedBy: 'fac2' }));
+    await assertFails(setDoc(doc(as('fac2'), ...P('c1', 'teachingAssignments', 'a1', 'documents', 'm02')), { ...mmeta, uploadedBy: 'fac2' }));
     await assertSucceeds(getDoc(m(as('stu1'))));
     await env.withSecurityRulesDisabled((ctx) => updateDoc(doc(ctx.firestore(), ...P('c1', 'enrollments', 's1_sem1')), { status: 'WITHDRAWN' }));
     await assertFails(getDoc(m(as('stu1'))));
     await env.withSecurityRulesDisabled((ctx) => updateDoc(doc(ctx.firestore(), ...P('c1', 'teachingAssignments', 'a1')), { active: false }));
-    await assertFails(setDoc(doc(as('fac1'), ...P('c1', 'teachingAssignments', 'a1', 'documents', 'm003')), { ...mmeta, objectKey: 'c1/teachingAssignments/a1/m003' }));
+    await assertFails(setDoc(doc(as('fac1'), ...P('c1', 'teachingAssignments', 'a1', 'documents', 'm03')), { ...mmeta }));
   });
 
   it('faculty documents are private to the owner and admins', async () => {
     const own = doc(as('fac1'), ...P('c1', 'faculty', 'f1', 'documents', 'f01'));
-    await assertSucceeds(setDoc(own, { objectKey: 'c1/faculty/f1/f01', uploadedBy: 'fac1', status: 'PENDING', size: 10, contentType: 'image/png' }));
+    await assertSucceeds(setDoc(own, { uploadedBy: 'fac1', status: 'PENDING', size: 10, contentType: 'image/png' }));
     await assertFails(getDoc(doc(as('fac2'), ...P('c1', 'faculty', 'f1', 'documents', 'f01'))));
     await assertSucceeds(getDoc(doc(as('ca1'), ...P('c1', 'faculty', 'f1', 'documents', 'f01'))));
   });
@@ -524,5 +525,61 @@ describe('admin clean-up, locks after publish, and the rest of the rules', () =>
     const q = (r) => getDocs(query(collection(db, 'users'), where('institutionId', '==', 'c1'), where('role', '==', r)));
     await assertSucceeds(q('COLLEGE_ADMIN'));
     await assertSucceeds(q('SUPER_ADMIN'));
+  });
+
+  describe('file content (stored in Firestore)', () => {
+    const bytes = (n) => ({ bytes: Bytes.fromUint8Array(new Uint8Array(n)) });
+    const metaPath = ['c1', 'students', 's1', 'documents', 'f01'];
+    const seedMeta = (status) => env.withSecurityRulesDisabled((ctx) =>
+      setDoc(doc(ctx.firestore(), ...P(...metaPath)), { uploadedBy: 'ca1', status, size: 1000, contentType: 'application/pdf', name: 'x' }));
+
+    it('bytes are accepted only for a PENDING file, from its uploader, at exactly the declared size', async () => {
+      await seedMeta('PENDING');
+      const content = (uid) => doc(as(uid), ...P(...metaPath, 'content', 'data'));
+      await assertFails(setDoc(content('ca1'), bytes(999)));
+      await assertFails(setDoc(content('ca1'), bytes(1001)));
+      await assertFails(setDoc(content('ca1'), { bytes: 'text' }));
+      await assertFails(setDoc(content('ca1'), { ...bytes(1000), extra: 1 }));
+      await assertFails(setDoc(content('stu1'), bytes(1000)));
+      await assertFails(setDoc(doc(as('ca1'), ...P(...metaPath, 'content', 'other')), bytes(1000)));
+      await assertSucceeds(setDoc(content('ca1'), bytes(1000)));
+    });
+
+    it('once READY the bytes cannot be replaced, and only permitted people read them', async () => {
+      await seedMeta('PENDING');
+      await env.withSecurityRulesDisabled((ctx) => setDoc(doc(ctx.firestore(), ...P(...metaPath, 'content', 'data')), bytes(1000)));
+      await assertFails(getDoc(doc(as('stu1'), ...P(...metaPath, 'content', 'data')))); // still PENDING
+      await seedMeta('READY');
+      await assertSucceeds(getDoc(doc(as('stu1'), ...P(...metaPath, 'content', 'data'))));
+      await assertSucceeds(getDoc(doc(as('ca1'), ...P(...metaPath, 'content', 'data'))));
+      await assertFails(getDoc(doc(as('stu2'), ...P(...metaPath, 'content', 'data'))));
+      await assertFails(getDoc(doc(as('fac1'), ...P(...metaPath, 'content', 'data'))));
+      await assertFails(setDoc(doc(as('ca1'), ...P(...metaPath, 'content', 'data')), bytes(1000)));
+      await assertFails(deleteDoc(doc(as('stu1'), ...P(...metaPath, 'content', 'data'))));
+    });
+
+    it('remove: mark DELETED, then delete the bytes and the record together', async () => {
+      await seedMeta('READY');
+      await env.withSecurityRulesDisabled((ctx) => setDoc(doc(ctx.firestore(), ...P(...metaPath, 'content', 'data')), bytes(1000)));
+      const db = as('ca1');
+      await assertSucceeds(updateDoc(doc(db, ...P(...metaPath)), { status: 'DELETED', updatedAt: now() }));
+      const b = writeBatch(db);
+      b.delete(doc(db, ...P(...metaPath, 'content', 'data')));
+      b.delete(doc(db, ...P(...metaPath)));
+      await assertSucceeds(b.commit());
+    });
+
+    it('class materials: enrolled students read the bytes of a READY file; withdrawn ones do not', async () => {
+      const path = ['c1', 'teachingAssignments', 'a1', 'documents', 'm01'];
+      await env.withSecurityRulesDisabled(async (ctx) => {
+        const db = ctx.firestore();
+        await setDoc(doc(db, ...P(...path)), { uploadedBy: 'fac1', status: 'READY', size: 1000, contentType: 'application/pdf', name: 'n' });
+        await setDoc(doc(db, ...P(...path, 'content', 'data')), bytes(1000));
+      });
+      await assertSucceeds(getDoc(doc(as('stu1'), ...P(...path, 'content', 'data'))));
+      await assertSucceeds(getDoc(doc(as('fac1'), ...P(...path, 'content', 'data'))));
+      await assertFails(getDoc(doc(as('fac2'), ...P(...path, 'content', 'data'))));
+      await assertFails(getDoc(doc(as('stu2'), ...P(...path, 'content', 'data')))); // enrolled in another section, withdrawn
+    });
   });
 });

@@ -76,20 +76,34 @@ service cloud.firestore {
         return get(/databases/$(database)/documents/institutions/$(iid)/teachingAssignments/$(id)).data;
       }
 
-      // File IDs are fixed slots, so rules cap the files per folder: f01-f20 (students, faculty),
-      // m001-m100 (class materials).
+      // Files live inside Firestore (Spark has no file storage). A file is a small metadata document plus one
+      // content document ({file}/content/data) holding the bytes, so listing files never downloads the bytes.
+      // File IDs are fixed slots, so rules cap the files per folder: f01-f05 (students, faculty), m01-m20 (class materials).
+      // 921600 bytes keeps the content document under Firestore's 1 MiB document limit.
       function validSlot(collection, docId) {
         return collection == 'teachingAssignments'
-          ? docId.matches('m(00[1-9]|0[1-9][0-9]|100)')
-          : docId.matches('f(0[1-9]|1[0-9]|20)');
+          ? docId.matches('m(0[1-9]|1[0-9]|20)')
+          : docId.matches('f0[1-5]');
       }
-      function newFile(collection, ownerId, docId, maxSize) {
+      function newFile(collection, ownerId, docId) {
         return validSlot(collection, docId)
-          && request.resource.data.objectKey == iid + '/' + collection + '/' + ownerId + '/' + docId
           && request.resource.data.uploadedBy == request.auth.uid
           && request.resource.data.status == 'PENDING'
-          && request.resource.data.size <= maxSize
+          && request.resource.data.size > 0 && request.resource.data.size <= 921600
           && request.resource.data.contentType in ['application/pdf', 'image/jpeg', 'image/png'];
+      }
+      function fileMeta(collection, ownerId, docId) {
+        return get(/databases/$(database)/documents/institutions/$(iid)/$(collection)/$(ownerId)/documents/$(docId)).data;
+      }
+      // The bytes can be written only while the file is PENDING, by whoever created it, and must match the declared size.
+      function contentWritable(collection, ownerId, docId) {
+        let m = fileMeta(collection, ownerId, docId);
+        return m.status == 'PENDING' && m.uploadedBy == request.auth.uid
+          && request.resource.data.keys().hasOnly(['bytes'])
+          && request.resource.data.bytes is bytes && request.resource.data.bytes.size() == m.size;
+      }
+      function contentReady(collection, ownerId, docId) {
+        return fileMeta(collection, ownerId, docId).status == 'READY';
       }
       // Allowed moves: PENDING to READY, READY to DELETED, PENDING to DELETED. Nothing leaves DELETED.
       function fileStatusChange() {
@@ -97,7 +111,7 @@ service cloud.firestore {
             || (resource.data.status == 'READY' && request.resource.data.status == 'DELETED'))
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt']);
       }
-      // The metadata document goes only after the Worker removed the object (status DELETED).
+      // The metadata document goes only once the file is marked DELETED (its content document is removed first).
       function fileDeletable() { return resource.data.status == 'DELETED'; }
 
       // Reference data any active user of the college may read.
@@ -120,9 +134,16 @@ service cloud.firestore {
 
         match /documents/{docId} {
           allow read: if isAdmin(iid) || (isStudent(iid) && me().studentId == studentId);
-          allow create: if isAdmin(iid) && newFile('students', studentId, docId, 1048576);
+          allow create: if isAdmin(iid) && newFile('students', studentId, docId);
           allow update: if isAdmin(iid) && fileStatusChange();
           allow delete: if isAdmin(iid) && fileDeletable();
+
+          match /content/{part} {
+            allow read: if (isAdmin(iid) || (isStudent(iid) && me().studentId == studentId))
+              && contentReady('students', studentId, docId);
+            allow create, update: if isAdmin(iid) && part == 'data' && contentWritable('students', studentId, docId);
+            allow delete: if isAdmin(iid);
+          }
         }
       }
 
@@ -140,9 +161,15 @@ service cloud.firestore {
             return isAdmin(iid) || (isFaculty(iid) && me().facultyId == facultyId);
           }
           allow read: if mine();
-          allow create: if mine() && newFile('faculty', facultyId, docId, 1048576);
+          allow create: if mine() && newFile('faculty', facultyId, docId);
           allow update: if mine() && fileStatusChange();
           allow delete: if mine() && fileDeletable();
+
+          match /content/{part} {
+            allow read: if mine() && contentReady('faculty', facultyId, docId);
+            allow create, update: if mine() && part == 'data' && contentWritable('faculty', facultyId, docId);
+            allow delete: if mine();
+          }
         }
       }
 
@@ -171,9 +198,15 @@ service cloud.firestore {
               && e.sectionId == assignment(assignmentId).sectionId && e.status != 'WITHDRAWN';
           }
           allow read: if isAdmin(iid) || teaches() || enrolled();
-          allow create: if mayUpload() && newFile('teachingAssignments', assignmentId, docId, 2097152);
+          allow create: if mayUpload() && newFile('teachingAssignments', assignmentId, docId);
           allow update: if mayUpload() && fileStatusChange();
           allow delete: if mayUpload() && fileDeletable();
+
+          match /content/{part} {
+            allow read: if (isAdmin(iid) || teaches() || enrolled()) && contentReady('teachingAssignments', assignmentId, docId);
+            allow create, update: if mayUpload() && part == 'data' && contentWritable('teachingAssignments', assignmentId, docId);
+            allow delete: if mayUpload();
+          }
         }
       }
 

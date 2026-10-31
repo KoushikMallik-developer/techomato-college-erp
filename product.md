@@ -43,7 +43,7 @@ Access is deny-by-default and scoped to the user's assigned records. Every colle
 ### 3.2 Student management
 - **STU-01:** Create, view, update, and deactivate student profiles.
 - **STU-02:** Store unique enrollment number, contact details, admission date, department, course, and status. Batch, semester, and section come from the student's enrollment record for each academic period.
-- **STU-03:** Upload and access student documents (PDF, JPEG, PNG, up to 1 MB, at most 20 files per student). Files are stored privately in Cloudflare R2; only admins of the college upload them, and only those admins and the student can open them.
+- **STU-03:** Upload and access student documents (PDF, JPEG, PNG, up to 900 KB each, at most 5 files per student). Files are stored privately inside the college's Firestore data; only admins of the college upload them, and only those admins and the student can open them.
 - **STU-04:** Search, filter, and paginate student records.
 - **STU-05:** Preserve historical academic records after deactivation.
 
@@ -52,7 +52,7 @@ Access is deny-by-default and scoped to the user's assigned records. Every colle
 - **FAC-02:** Assign department, subjects, and class/section responsibilities.
 - **FAC-03:** Record and review faculty attendance.
 - **FAC-04:** Prevent unassigned faculty from changing another class's records.
-- **FAC-05:** Faculty can upload their own documents (for example a CV or certificates; PDF, JPEG, PNG, up to 1 MB, at most 20 files). Only that faculty member and the college's admins can open them.
+- **FAC-05:** Faculty can upload their own documents (for example a CV or certificates; PDF, JPEG, PNG, up to 900 KB each, at most 5 files). Only that faculty member and the college's admins can open them.
 
 ### 3.4 Academic management
 - **ACA-01:** Manage departments, courses/programs, subjects, academic years, semesters, sections, and batches.
@@ -77,7 +77,7 @@ Access is deny-by-default and scoped to the user's assigned records. Every colle
 - **EXM-06:** Export basic student result reports (CSV, or print to PDF from the browser).
 
 ### 3.7 Class materials
-- **MAT-01:** Faculty upload class materials (PDF, JPEG, PNG, up to 2 MB each) to a class they currently teach (at most 100 files per class), and can remove their own uploads.
+- **MAT-01:** Faculty upload class materials (PDF, JPEG, PNG, up to 900 KB each) to a class they currently teach (at most 20 files per class), and can remove their own uploads.
 - **MAT-02:** Students enrolled in that class (same section and semester, not withdrawn) and the college's admins can open the materials; no one else can. Students cannot upload or delete.
 - **MAT-03:** A replaced teacher can no longer upload to that class; materials already uploaded stay available to the class.
 
@@ -103,7 +103,7 @@ Access is deny-by-default and scoped to the user's assigned records. Every colle
 
 ## 6. Nonfunctional requirements
 
-- **Security:** Firebase Authentication; strict tenant isolation (each college's data lives under its own path and rules check the user's college on every request); roles and active status in the user profile, checked by least-privilege Firestore Security Rules on every request (student files are served by a Cloudflare Worker that defers to those rules); App Check enabled; no Admin credentials in the browser; audit log that cannot be edited or deleted.
+- **Security:** Firebase Authentication; strict tenant isolation (each college's data lives under its own path and rules check the user's college on every request); roles and active status in the user profile, checked by least-privilege Firestore Security Rules on every request (files are stored in Firestore and use the same rules); App Check enabled; no Admin credentials in the browser; audit log that cannot be edited or deleted.
 - **Privacy:** Minimize personal data; use private document storage; define retention and deletion procedures; do not collect Aadhaar unless a clear lawful need is established.
 - **Reliability:** Store attendance as one document per student per subject assignment so the free 1 GiB storage and daily read quota last. Use batched writes and transactions for related changes; use deterministic document IDs to prevent duplicates; the project keeps no backups of its own (the Spark plan has none managed).
 - **Performance:** Paginate large lists; use indexed queries; avoid unbounded collection reads; use count queries for totals.
@@ -118,8 +118,8 @@ Access is deny-by-default and scoped to the user's assigned records. Every colle
 - A deactivated user is denied on their next request, even with a valid session.
 - A user of college A cannot read or write any data of college B, including by guessing document IDs or sending another college's ID in a request.
 - A suspended college is denied on the next request. The Platform Admin cannot read a college's students, marks, or attendance, and cannot create a Super Admin for an existing college.
-- A student can open only their own files. A user of another college, a missing or forged login token, or a suspended college is refused by the file service.
-- Class materials can be opened only by admins, the teacher, and students enrolled in that class. A replaced teacher cannot upload, and students cannot upload or delete. A faculty member's own documents are visible only to them and admins. Uploads over the size limit, without a declared size, or past the per-folder file cap are refused.
+- A student can open only their own files. A user of another college, or a suspended college, is refused by the rules.
+- Class materials can be opened only by admins, the teacher, and students enrolled in that class. A replaced teacher cannot upload, and students cannot upload or delete. A faculty member's own documents are visible only to them and admins. Uploads over the size limit or past the per-folder file cap are refused, and file content cannot be read until its upload is complete.
 - Two colleges can use the same enrollment number, room name, and timetable slot without conflict.
 - An admin can configure a department, course, semester, section, faculty assignment, and student enrollment end-to-end.
 - Faculty can save and correct attendance for assigned sessions; every correction is logged with the old and new value; a second session or duplicate record for the same slot cannot be created.
@@ -132,14 +132,14 @@ Access is deny-by-default and scoped to the user's assigned records. Every colle
 - College Admin cannot create, change, or demote a Super Admin or another College Admin; audit entries cannot be reused to cover several edits.
 - Marks outside allowed ranges are rejected; unpublished results are invisible to students; a failed publish shows nothing to students.
 - Dashboard metrics reconcile with underlying records.
-- Firestore Security Rules are tested in the Firebase Emulator Suite before release, including batch sizes that stay within rule lookup limits. The file Worker is tested for missing, forged and wrong-college tokens.
+- Firestore Security Rules are tested in the Firebase Emulator Suite before release, including batch sizes that stay within rule lookup limits. The file content rules are tested (size, status, who can read).
 
 ## 8. Release plan
 
 | Milestone | Deliverable |
 |---|---|
 | M1 | React/Vite setup, Firebase project, Authentication, tenant model and Platform Admin, user profiles and roles, Security Rules with tenant isolation tests, academic structure |
-| M2 | Student/faculty profiles, enrollments and assignments, student and faculty file upload (R2 Worker) |
+| M2 | Student/faculty profiles, enrollments and assignments, student and faculty file upload (files in Firestore) |
 | M3 | Timetable, attendance and class materials |
 | M4 | Exams, marks, result publication, dashboards/reports |
 | M5 | Security-rule tests, end-to-end tests, an offboarding procedure, quota review, pilot deployment with one college |
@@ -149,6 +149,6 @@ Access is deny-by-default and scoped to the user's assigned records. Every colle
 - Which Firebase plan runs the paid multi-college launch? Spark's shared quotas fit a pilot only; Blaze is expected.
 - Semester-based only, or also annual programs?
 - Are grade/SGPA calculations needed in MVP, or percentage and pass/fail only?
-- Cloudflare R2: does enabling it need a payment method, and what are the current free limits? If you cannot add one, STU-03 (student files) moves out of the MVP.
+- Firebase Storage needs the Blaze plan. Until then files stay inside Firestore: small (900 KB each) and counted against the shared 1 GiB limit. Is that enough for student documents?
 
 **Default assumptions:** colleges share one Firebase project and are created by the Platform Admin by hand; one email address belongs to one college; the pilot runs one college; semester-based programs; percentage/pass-fail results; leave sessions excluded from attendance percentage; no parent accounts; Firebase Spark plan.

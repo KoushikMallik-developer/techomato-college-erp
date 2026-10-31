@@ -3,9 +3,9 @@
 Notes on decisions and state, so a new session can continue without re-deriving them. The specs are [product.md](product.md) and [system_design.md](system_design.md). This file does not repeat them; it records why things are the way they are.
 
 ## State
-- The app is built (React + Vite, `firestore.rules`, `worker/`, `scripts/`). It is a git repo with one local commit; nothing is pushed.
-- Verified: `npm test` (19 unit and Worker tests), `npm run test:rules` (40 Security Rules tests on the Firestore emulator, including a 60-student attendance batch), and `vite build`.
-- Not verified: the UI has never been opened in a browser against a real or emulated project, the Worker has not run on Cloudflare, and the quota numbers are estimates.
+- The app is built (React + Vite, `firestore.rules`, `scripts/`). It is a git repo with one local commit; nothing is pushed.
+- Verified: `npm test` (15 unit and component tests), `npm run test:rules` (50 Security Rules tests on the Firestore emulator, including a 60-student attendance batch), and `vite build`.
+- Not verified: the UI has never been opened in a browser against a real or emulated project, and the quota numbers are estimates.
 - Rules fixes found while building: students must fetch results by ID (`{examId}_{studentId}`), because rules do not filter queries and a query touching a draft result is rejected whole.
 - `firebase emulators:exec` leaves a Java process holding its port after a run (killing it was not permitted). The rules tests use `firebase.rules-test.json`; if the port is taken, change the number there (now 8383).
 
@@ -13,7 +13,7 @@ Notes on decisions and state, so a new session can continue without re-deriving 
 - **Multi-tenant SaaS.** Many colleges share one Firebase project. Each college's data lives under `institutions/{institutionId}/…`. One email belongs to one college.
 - **Firebase Spark (free) plan.** No Cloud Functions, so the "backend" is Firestore Security Rules plus client batches.
 - **No payment system.** The whole Fees module, receipts and the Accountant role were removed. Subscription billing is out of scope; the Platform Admin creates and suspends colleges by hand.
-- **Files go to Cloudflare R2 behind a Cloudflare Worker**, not Google Drive and not Firebase Storage. The Worker forwards the caller's Firebase token to Firestore, and the Security Rules decide who may open a file.
+- **Files are stored inside Firestore** (decided: the user chose "only Firebase, stay on Spark" over Firebase Storage, which needs Blaze). Each file is a metadata document plus a content document holding `bytes`, 900 KB max, slots f01-f05 / m01-m20. Cloudflare R2 and its Worker were removed.
 - **File features:** student documents (admins upload), faculty's own documents, and class materials (a teacher uploads for a class they teach; enrolled students read).
 
 ## Decisions I made and the user did not object to
@@ -37,7 +37,7 @@ Notes on decisions and state, so a new session can continue without re-deriving 
 - Auth accounts cannot be disabled from the client; deactivation is enforced by `active` in rules only. A hostile admin can squat another college's email addresses.
 
 ## Open items
-- Cloudflare R2: does enabling it need a payment method, and what are the current free limits (about 10 GB storage, Workers free plan request cap)? If it needs a card the user cannot add, STU-03 and class materials move out of the MVP.
+- Firebase Storage needs Blaze. Files in Firestore share the 1 GiB limit (2000 students x 3 files x 250 KB would not fit). Decide whether that is enough or the project moves to Blaze.
 - Verify in the Firebase emulator: rule syntax (`diff().affectedKeys()`, `getAfter`, `matches()`, `let` in functions, nested functions), and that batches stay inside the per-request lookup limits (60-student attendance batch, 3-lock timetable save, 500-document result chunk).
 - Confirm Spark's free quota reset time (believed to be midnight Pacific).
 - Check whether turning off Auth sign-up would also block the admin's secondary-app account creation.

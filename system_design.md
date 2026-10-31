@@ -11,10 +11,10 @@ Build a client-rendered React application as a **multi-tenant SaaS**: many colle
 
 The project starts on the **Firebase Spark (free) plan**. Spark constraints that shape this design:
 
-- **No Cloud Functions** (they need Blaze). Server-side trust is enforced by **Firestore Security Rules** plus client batches (and, for files only, a small Cloudflare Worker). There is no privileged backend code.
+- **No Cloud Functions** (they need Blaze). Server-side trust is enforced by **Firestore Security Rules** plus client batches. There is no privileged backend code.
 - **Hard daily quotas shared by all colleges.** Firestore free quota: 50k reads, 20k writes, 20k deletes per day, 1 GiB stored. When a quota is used up, the service stops for every college until reset. Rules cannot limit one college's usage. Check current numbers before launch.
 - **No managed backups or scheduled exports.** By decision this project keeps no backups of its own.
-- **No Firebase Storage** (a new project may need Blaze for it). Student files go to a private **Cloudflare R2** bucket behind a **Cloudflare Worker**, both on free plans. See section 5.3.
+- **No Firebase Storage on Spark** (a new project may need the Blaze plan for it; verify). Student files and class materials are stored inside Firestore documents instead, so each file is small (900 KB). See section 5.3.
 
 **Spark is a pilot plan for one college of about 2000 students, or two small ones.** On a normal day that college uses about half of the daily writes, and on a marks-entry day it can use more than all of them (section 8). Onboarding more paying colleges needs the Blaze plan, which also unlocks Cloud Functions (section 12).
 
@@ -32,9 +32,6 @@ flowchart TD
     U[College admins / Faculty / Students] --> WEB[React + Vite Web App]
     WEB --> AUTH[Firebase Authentication]
     WEB --> FS[Cloud Firestore + Security Rules]
-    WEB --> WK[Cloudflare Worker]
-    WK --> R2[(Private R2 bucket)]
-    WK -->|forwards the user's token| FS
     WEB --> HOST[Firebase Hosting]
 ```
 
@@ -42,9 +39,8 @@ flowchart TD
 |---|---|
 | Firebase Authentication | Email/password sign-in and password reset for all colleges |
 | Cloud Firestore | All application data and audit events, separated per college by path |
-| Cloudflare R2 + Worker | Student documents and profile photos in a private bucket. The Worker is the only way in or out, and it lets Firestore Security Rules decide who may access a file |
 | Firebase Hosting | React production build and SPA routes |
-| Firebase Emulator Suite | Local development and automated Auth/Firestore rule tests (the Worker is tested with `wrangler dev`) |
+| Firebase Emulator Suite | Local development and automated Auth/Firestore rule tests |
 | App Check (reCAPTCHA) | Reject calls that do not come from the real web app; start in monitor mode |
 
 Use a separate Firebase project for development and production. Never commit service-account keys.
@@ -117,7 +113,7 @@ All collections in this and the following sections are under `institutions/{inst
 | `semesters/{semesterId}` | courseId, academicYearId, number, startDate, endDate |
 | `sections/{sectionId}` | courseId, semesterId, academicYearId, name, room |
 | `students/{studentId}` | uid, enrollmentNumber, enrollmentKey, name, email, phone, admissionDate, departmentId, courseId, status |
-| `students/{studentId}/documents/{docId}` | name, kind (`DOCUMENT` or `PROFILE_PHOTO`), objectKey, contentType, size, status (`PENDING`, `READY`, `DELETED`), uploadedBy, createdAt, updatedAt |
+| `students/{studentId}/documents/{docId}` | name, kind (`DOCUMENT`, `PROFILE_PHOTO` or `MATERIAL`), contentType, size, status (`PENDING`, `READY`, `DELETED`), uploadedBy, createdAt, updatedAt |
 | `faculty/{facultyId}/documents/{docId}` | same fields as student documents (kind `DOCUMENT`) |
 | `teachingAssignments/{assignmentId}/documents/{docId}` | same fields (kind `MATERIAL`; `name` is the title shown to students) |
 | `faculty/{facultyId}` | uid, employeeCode, name, email, phone, departmentId, designation, status |
@@ -194,33 +190,30 @@ All collections in this and the following sections are under `institutions/{inst
 - The Platform Admin has no access to college data, only to `institutions` documents, Super Admin `users` documents and `platformAuditLogs`.
 - No Admin SDK credentials in the browser.
 
-### 5.3 Files (Cloudflare R2 + Worker)
+### 5.3 Files (stored inside Firestore)
 
-All files go to a **private R2 bucket**: no public access, and no bucket keys in the browser. A small Cloudflare Worker (free plan, code in `worker/`) is the only way in or out. There are three kinds of file:
+Spark has no file storage, so files live in Firestore. A file is two documents: a small **metadata** document (title, type, size, status, uploader) and one **content** document at `…/documents/{docId}/content/data` that holds the bytes as a Firestore `bytes` value. Listing files reads only the metadata, never the bytes. There are three kinds of file:
 
-| Kind | Firestore metadata path (under the college) | Uploaded by | Opened by | Max size |
+| Kind | Firestore metadata path (under the college) | Uploaded by | Opened by | Max files |
 |---|---|---|---|---|
-| Student documents and photos (STU-03) | `students/{studentId}/documents/{docId}` | college admins | admins, the student | 1 MB |
-| Faculty's own documents (FAC-05) | `faculty/{facultyId}/documents/{docId}` | that faculty member, admins | the same people | 1 MB |
-| Class materials (MAT-01) | `teachingAssignments/{assignmentId}/documents/{docId}` | admins, and the teacher whose assignment is `active` | admins, that teacher, and students whose enrollment has the assignment's section and semester | 2 MB |
+| Student documents and photos (STU-03) | `students/{studentId}/documents/{docId}` | college admins | admins, the student | 5 |
+| Faculty's own documents (FAC-05) | `faculty/{facultyId}/documents/{docId}` | that faculty member, admins | the same people | 5 |
+| Class materials (MAT-01) | `teachingAssignments/{assignmentId}/documents/{docId}` | admins, and the teacher whose assignment is `active` | admins, that teacher, and students whose enrollment has the assignment's section and semester | 20 |
 
-- **Object key:** `{institutionId}/{collection}/{ownerId}/{docId}` with a `docId` that is a fixed slot (`f01`–`f20` for students and faculty, `m001`–`m100` for class materials), where `collection` is `students`, `faculty` or `teachingAssignments`. No personal data in keys or file names. The rules accept no other `docId`, so **the rules themselves cap the number of files** per folder, and a deleted record frees its slot. This caps stored records and R2 objects, not writes (see the shortcut in 4.5). The rules also require `objectKey` to match the metadata path.
-- **Firestore decides, not the Worker.** The Worker never holds a permission list. It forwards the caller's own Firebase ID token to the Firestore REST API and reads **one document**: the file's metadata document. Firestore checks the token and applies the Security Rules (right college, `active`, college not suspended, and the kind-specific rule above, including the class-enrollment check for materials). If Firestore refuses, the Worker answers 403. Because Firestore accepted the token for that read, the token is genuine and the Worker can read the `uid` from it. The Worker needs no token-checking code and no secrets.
-- **Status:** `PENDING` → `READY` → `DELETED`. The rules let only the people who may upload change it. A reader, such as a student, cannot. Status only moves forward (nothing leaves `DELETED`), and the metadata document can be deleted only when its status is `DELETED`, which means the Worker has already removed the object.
-- **Endpoints** (`{collection}` must be one of the three names; the object key always comes from the URL path, never from a document field):
-  - `PUT /files/{iid}/{collection}/{ownerId}/{docId}` — upload. The metadata document must be readable by the caller, have `status == PENDING` and `uploadedBy == uid`. Only someone allowed to upload could create it, so the Worker does no role check. The Worker answers 411 if `Content-Length` is missing and 413 if it exceeds the metadata `size` (itself at most the kind's limit). `Content-Type` must equal the metadata `contentType`. Then it streams the body into R2 through the bucket binding. After the write it compares the stored object's real size with the metadata `size`; if they differ it deletes the object and answers 400.
-  - `GET /files/...` — download. Requires `status == READY`. Response headers: `Content-Disposition: attachment`, `X-Content-Type-Options: nosniff`, `Cache-Control: private, no-store`.
-  - `DELETE /files/...` — requires `status == DELETED`, not just read access. A student who can read a file therefore cannot delete it. The Worker removes the object, then the client deletes the metadata document.
-- **Upload order:** create the metadata document first, in the first free slot (rules check slot, path, type and size) → `PUT` to the Worker → set `status = READY`. A failed upload leaves a `PENDING` document that the UI offers to retry or delete. `shortcut:` a client can mark a file `READY` without uploading, which gives a broken link only; a failed delete can leave an orphan object that costs a little storage. A weekly check on Blaze can clean these.
-- **Limits:** PDF, JPEG or PNG only; compress images in the browser before upload. `shortcut:` the Worker cannot check that bytes match the declared type; `attachment` and `nosniff` stop the browser from running them. There is no virus scan. The per-folder file cap comes from the fixed slot IDs, not from the Worker.
-- **CORS:** the Worker answers only the app's Hosting domain.
-- **Showing files:** a plain `<img src>` or `<iframe src>` sends no login token, so the app fetches each file with the token and shows it through a blob URL (`URL.createObjectURL`). That is also why the response is `attachment`: files are never opened by a direct link.
-- **Free-plan limits (verify before launch):** R2 about 10 GB stored, shared by all colleges; Workers free plan about 100k requests a day. Enabling R2 may ask for a payment method.
+- **Size limit: 900 KB per file** (921,600 bytes), because a Firestore document is limited to 1 MiB. PDF, JPEG or PNG only. The browser shrinks big images (over about 600 KB) to a JPEG of at most 1600 pixels before upload, so phone photos fit. PDFs cannot be shrunk: a larger PDF is refused with a message to compress it.
+- **Slots:** the file ID is a fixed slot (`f01`–`f05` for students and faculty, `m01`–`m20` for class materials). Rules accept no other ID, so the rules themselves cap how many files a folder holds. This caps stored records, not writes (see the shortcut in 4.5).
+- **Rules decide everything, there is no server.** Reading the bytes needs the metadata to be `READY` and the reader to be allowed for that kind (the same checks as for the metadata, including the class-enrollment check for materials). Writing the bytes needs the metadata to be `PENDING`, the writer to be the person who created it, and the byte count to equal the declared `size` exactly. Once `READY`, the bytes cannot be replaced.
+- **Status:** `PENDING` → `READY` → `DELETED`. Only the people who may upload change it. Status only moves forward (nothing leaves `DELETED`), and the metadata document can be deleted only when its status is `DELETED`.
+- **Upload order:** create the metadata (PENDING, first free slot) → write the bytes → set `READY`. A failed upload leaves a PENDING record that the UI offers to remove.
+- **Remove order:** set `DELETED`, then delete the content and the metadata in one batch. A failure between the two steps can simply be repeated (the Remove button stays).
+- **Download:** the app reads the content document and offers it as a download. The extension is added from the type when the title has none.
+- **Storage budget (important on Spark):** all colleges share 1 GiB of Firestore storage, and every file counts against it. For example 2000 students × 3 files × 250 KB is about 1.5 GB, which does not fit. Keep student documents optional and small, or move files to Firebase Storage (needs the Blaze plan) before onboarding a real college. Every download is one document read of up to 900 KB.
+- `shortcut:` rules cannot check that the bytes really are the declared type, so a file can claim to be a PDF. The app downloads it under the declared type and never shows it inside the page. There is no virus scan. Upgrade: Firebase Storage with a scanning step on Blaze.
 - Result and receipt PDFs are not stored: reports are CSV or the browser's print-to-PDF.
 
 ### 5.4 Example Firestore rule pattern
 
-**`firestore.rules` is the authoritative ruleset (with `tests/rules/`); this block is a trimmed sketch.** Differences in the real file: reference data (departments, courses, subjects, years, semesters, sections, exams, announcements) shares one generic rule; `examSubjects` can be created, changed or deleted only while the exam is a draft; admins can delete `studentMarks` while the exam is a draft (to clear a stray record or remove a paper); `users` updates also pin `role`; students fetch results by ID as shown below. The file Worker also passes the App Check token on to Firestore. Review and test every collection and operation before deployment. Audit entry creation must be in the same batch as the write that needs it. The first Platform Admin's `users` document is created by hand in the console.
+**`firestore.rules` is the authoritative ruleset (with `tests/rules/`); this block is a trimmed sketch.** Differences in the real file: reference data (departments, courses, subjects, years, semesters, sections, exams, announcements) shares one generic rule; `examSubjects` can be created, changed or deleted only while the exam is a draft; admins can delete `studentMarks` while the exam is a draft (to clear a stray record or remove a paper); `users` updates also pin `role`; students fetch results by ID as shown below. Review and test every collection and operation before deployment. Audit entry creation must be in the same batch as the write that needs it. The first Platform Admin's `users` document is created by hand in the console.
 
 ```javascript
 rules_version = '2';
@@ -295,28 +288,29 @@ service cloud.firestore {
         return get(/databases/$(database)/documents/institutions/$(iid)/teachingAssignments/$(id)).data;
       }
 
-      // File IDs are fixed slots, so rules cap the files per folder: f01-f20 (students, faculty), m001-m100 (class materials).
+      // Files live inside Firestore: a metadata document plus a content document (section 5.3). Slots cap the files per folder.
       function validSlot(collection, docId) {
         return collection == 'teachingAssignments'
-          ? docId.matches('m(00[1-9]|0[1-9][0-9]|100)')
-          : docId.matches('f(0[1-9]|1[0-9]|20)');
+          ? docId.matches('m(0[1-9]|1[0-9]|20)')
+          : docId.matches('f0[1-5]');
       }
-      // Shared checks for file metadata documents (section 5.3).
-      function newFile(collection, ownerId, docId, maxSize) {
+      // Shared checks for file metadata documents. 921600 bytes keeps the content document under Firestore's 1 MiB limit.
+      function newFile(collection, ownerId, docId) {
         return validSlot(collection, docId)
-          && request.resource.data.objectKey == iid + '/' + collection + '/' + ownerId + '/' + docId
           && request.resource.data.uploadedBy == request.auth.uid
           && request.resource.data.status == 'PENDING'
-          && request.resource.data.size <= maxSize
+          && request.resource.data.size > 0 && request.resource.data.size <= 921600
           && request.resource.data.contentType in ['application/pdf', 'image/jpeg', 'image/png'];
       }
+      // Each documents match also has a content/{part} match: bytes are written only while PENDING, by the uploader, at
+      // exactly the declared size; read only once READY (see firestore.rules for contentWritable and contentReady).
       // Allowed moves: PENDING to READY, READY to DELETED, PENDING to DELETED. Nothing leaves DELETED.
       function fileStatusChange() {
         return ((resource.data.status == 'PENDING' && request.resource.data.status in ['READY', 'DELETED'])
             || (resource.data.status == 'READY' && request.resource.data.status == 'DELETED'))
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt']);
       }
-      // The metadata document goes only after the Worker removed the object (status DELETED).
+      // The metadata document goes only once the file is marked DELETED (its content document is removed first).
       function fileDeletable() { return resource.data.status == 'DELETED'; }
 
       // Reference data any active user of the college may read: departments, courses, subjects,
@@ -336,10 +330,10 @@ service cloud.firestore {
           && request.resource.data.enrollmentKey == resource.data.enrollmentKey;
         // No delete: deactivate with status instead (history is kept).
 
-        // File metadata for the R2 Worker (section 5.3). The Worker reads this document with the caller's token.
+        // File metadata, and the content document under it (section 5.3).
         match /documents/{docId} {
           allow read: if isAdmin(iid) || (tenantOk(iid) && role() == 'STUDENT' && me().studentId == studentId);
-          allow create: if isAdmin(iid) && newFile('students', studentId, docId, 1048576);
+          allow create: if isAdmin(iid) && newFile('students', studentId, docId);
           allow update: if isAdmin(iid) && fileStatusChange();
           allow delete: if isAdmin(iid) && fileDeletable();
         }
@@ -352,7 +346,7 @@ service cloud.firestore {
             return isAdmin(iid) || (tenantOk(iid) && role() == 'FACULTY' && me().facultyId == facultyId);
           }
           allow read: if mine();
-          allow create: if mine() && newFile('faculty', facultyId, docId, 1048576);
+          allow create: if mine() && newFile('faculty', facultyId, docId);
           allow update: if mine() && fileStatusChange();
           allow delete: if mine() && fileDeletable();
         }
@@ -378,7 +372,7 @@ service cloud.firestore {
               && e.sectionId == assignment(assignmentId).sectionId && e.status != 'WITHDRAWN';
           }
           allow read: if isAdmin(iid) || teaches() || enrolled();
-          allow create: if mayUpload() && newFile('teachingAssignments', assignmentId, docId, 2097152);
+          allow create: if mayUpload() && newFile('teachingAssignments', assignmentId, docId);
           allow update: if mayUpload() && fileStatusChange();
           allow delete: if mayUpload() && fileDeletable();
         }
@@ -527,7 +521,7 @@ Add field allow-lists, status checks (`PRESENT`/`ABSENT`/`LEAVE`) and immutable-
 | Edit attendance | New audit entry required in the same batch |
 | Save marks | Exam found via the exam subject; assignment owner, subject, semester and section match; exam must be `DRAFT`; range check; update only by the owning assignment |
 | Publish results | Draft `results` in chunks, then one write flips `exams.status` |
-| File access | Worker forwards the user's token and Firestore rules decide (kind-specific, including class enrollment for materials). Status only moves forward and the metadata document is deleted only after `DELETED`. Fixed slot IDs cap the files per folder. The Worker enforces size and checks the stored size |
+| File access | A metadata document plus a content document per file; rules check the kind-specific reader or uploader, class enrollment for materials, status order, the declared size, and fixed slot ids |
 | Audit | `create`-only, staff only, entry must be new |
 | Dashboard totals | Client `count()` queries inside the college's path; attendance summary from `classSessions` |
 | Offboarding | Suspend the college; after the retention period, delete its data with an Admin SDK script (not provided) |
@@ -536,7 +530,7 @@ Add field allow-lists, status checks (`PRESENT`/`ABSENT`/`LEAVE`) and immutable-
 
 - **Reads:** feature service → Firestore query on the user's own college path → UI. Rules check every read.
 - **Writes:** feature service → batch or transaction → rules validate tenant, fields, ownership and assignment.
-- **Files:** React → Cloudflare Worker (with the user's Firebase ID token) → R2. The Worker asks Firestore, with that token, whether the user may touch the file. The path is stored in the metadata document (section 5.3).
+- **Files:** React → Firestore: a metadata document and a content document under the file's folder (section 5.3).
 - **Reports:** built in the client from queried data; CSV download or print-to-PDF.
 
 Do not put secret keys in React. Firebase web configuration is not a secret; Authentication, Security Rules and App Check are the access boundary.
@@ -549,7 +543,7 @@ Do not put secret keys in React. Firebase web configuration is not a secret; Aut
 - Use server timestamps for event times.
 - Add a single-field index exemption for `studentAttendance.records` (`fieldOverrides` in `firestore.indexes.json`). Nobody queries by map key, and automatic indexing would add about two index entries per entry, which is about 400 per document at 200 entries.
 - **Quota budget (Spark, shared by all colleges):** each student-session mark is one write to that student's semester document. Daily writes per college ≈ students marked per day × periods, plus about 100 `classSessions`. With about 2000 students and 5 periods, that is about 10k writes against a 20k limit **for the whole project**. Marks entry is one write per student per subject: about 12k for 2000 students × 6 subjects per exam, and publishing adds about 2000 `results` writes. On a day with attendance and a full marks round together, one college writes about 22k and the project stops. Keep marks entry and publishing to about 8k writes a day in total (for example one department per day), and do not publish on the same day as a marks round. Attendance is about 12k small documents per semester per college, and marks about 48k with 4 exams (together well under 200 MB). Rule lookups count as reads, and every request pays two (user and college). Plan for one college on Spark; a second needs Blaze. Rules cannot cap one college's usage, so a busy college can stop all the others for the day.
-- **Files:** every file open costs about 4 to 5 Firestore reads (user, college, metadata, and for materials the assignment and enrollment lookups). R2's free 10 GB is shared by all colleges. Student documents at about 5 files of 0.5 MB for 2000 students are about 5 GB for one college. Class materials add more: about 6 subjects × 30 files × 1 MB is about 180 MB per section, so 20 sections is about 3.6 GB. Expect to need paid R2 (storage is cheap and downloads are free) with the first real college.
+- **Files:** stored in Firestore, so they share the 1 GiB limit with everything else (see 5.3). A download is one read of the content document, plus the rule lookups (user, college, metadata, and for materials the assignment and enrollment).
 - Never create one document per student per session. The free 1 GiB and the 20k daily deletes cannot absorb it.
 
 ## 9. Environment and deployment
@@ -557,7 +551,6 @@ Do not put secret keys in React. Firebase web configuration is not a secret; Aut
 ```text
 Browser → Firebase Hosting (HTTPS, React build + SPA fallback)
         → Authentication / Firestore
-        → Cloudflare Worker → R2 (student files)
 ```
 
 Repository layout:
@@ -566,7 +559,6 @@ Repository layout:
 college-management-system/
   src/  public/
   scripts/create-platform-admin.js   # creates the first Platform Admin (run once, on your machine)
-  worker/                # Cloudflare Worker for student files (wrangler.toml, src/index.js)
   firestore.rules  firestore.indexes.json
   firebase.json  .firebaserc  .env.example
   product.md  system_design.md
@@ -579,11 +571,10 @@ Deployment steps:
 4. Create Firestore in production mode and choose the region (cannot be changed later).
 5. Deploy rules and indexes with the Firebase CLI. Create the first Platform Admin by hand.
 6. Enable App Check in monitor mode, then enforce.
-7. Test with the Emulator Suite (Auth, Firestore) and test the Worker with `wrangler dev`.
-8. Create the private R2 bucket (no public access), deploy the Worker with the bucket binding, and set its allowed origin to the Hosting domain.
-9. Build the React app and deploy Hosting.
+7. Test with the Emulator Suite (Auth, Firestore).
+8. Build the React app and deploy Hosting.
 
-**Offboarding a college:** suspend it, and after the agreed retention period delete its `institutions/{id}` subtree, its `users` documents, its R2 objects under the `{id}/` prefix and its Auth accounts with an Admin SDK script. Deleting costs against the 20k daily delete quota, so a large college takes several days. There are no backups: Spark has no managed ones, and the project has decided it does not need its own.
+**Offboarding a college:** suspend it, and after the agreed retention period delete its `institutions/{id}` subtree, its `users` documents and its Auth accounts with an Admin SDK script. Deleting costs against the 20k daily delete quota, so a large college takes several days. There are no backups: Spark has no managed ones, and the project has decided it does not need its own.
 
 ## 10. Testing strategy
 
@@ -591,12 +582,12 @@ Deployment steps:
 |---|---|
 | Unit | Attendance percentage, pass/fail calculation, input validation, tenant path helper |
 | Security Rules | **Tenant isolation:** a user of college A is denied every read and write under college B, a forged `institutionId` in a document or `users` write is rejected, a Platform Admin cannot read students, attendance or marks, a Platform Admin cannot create a Super Admin for an existing college, a suspended college is locked out, two colleges can use the same enrollment number, room name and slot. **Roles:** `active` check, College Admin cannot touch Super Admin or other admins, nobody can create or assign `PLATFORM_ADMIN`, student self-access, faculty cannot write attendance or marks for another section/subject, marks cannot be written through a draft `examId` of another exam, a teacher cannot overwrite another section's marks, locks and slot moves (a slot cannot be edited onto an occupied place), enrollment number uniqueness (case and update), audit entry cannot be reused, students cannot write audit logs, marks and results locked after publish, publish blocked while marks are missing, a replaced teacher cannot write attendance, deactivation sets both flags, draft result privacy, file access (students open only their own class's materials, a replaced teacher cannot upload, faculty documents are private, a file ID outside the fixed slots is refused, a student cannot set `DELETED`, status cannot leave `DELETED`, a metadata document cannot be deleted before `DELETED`, a withdrawn student is denied), batch lookup limits |
-| Worker | Missing, expired, forged or wrong-college tokens are refused; a student cannot fetch another student's file; a reader without upload rights cannot delete (`DELETE` needs status `DELETED`); size and type limits hold per kind, a missing `Content-Length` is refused (411), an upload larger than declared is deleted (400); a suspended college is refused; the object key comes from the URL path |
+| Files | Bytes accepted only for a PENDING file, from its uploader, at exactly the declared size; unreadable until READY; not replaceable after READY; slot ids cap the files; readers cannot delete; class files only for enrolled students |
 | Integration | College creation, enrollment, attendance, marks and published results |
 | E2E | Platform Admin creates college → Super Admin setup → student enrollment → attendance → results |
 | Operations | Offboarding rehearsal, quota estimate |
 
-Use the Emulator Suite for Auth and Firestore, and `wrangler dev` for the Worker. Include negative tests proving that unauthorized users cannot read or modify records, including a deactivated user holding a valid session.
+Use the Emulator Suite for Auth and Firestore. Include negative tests proving that unauthorized users cannot read or modify records, including a deactivated user holding a valid session.
 
 ## 11. Implementation order
 
@@ -618,7 +609,7 @@ Use the Emulator Suite for Auth and Firestore, and `wrangler dev` for the Worker
 ## 13. Open technical decisions
 
 - Which plan runs the paid multi-college launch? Spark's shared quotas fit a pilot only; Blaze is expected.
-- Cloudflare R2: does enabling it need a payment method on file, and what are the current free limits (about 10 GB, and the Workers free plan's request cap)? If you cannot add one, STU-03 moves out of the MVP.
+- Firebase Storage: it needs the Blaze plan. Until then files stay inside Firestore (900 KB each, counted against the shared 1 GiB). Is that enough for student documents, or does the project move to Blaze?
 - JavaScript or TypeScript for the React app (this document assumes JavaScript).
 - Firestore region, chosen for data residency and latency (one region for all colleges).
 - The retention period before a suspended college's data is deleted.
