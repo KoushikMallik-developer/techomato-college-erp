@@ -10,6 +10,11 @@ export default class ErrorBoundary extends Component {
     return { failed: true };
   }
 
+  // React does not print errors a boundary catches in production, and there is no monitoring service yet.
+  componentDidCatch(error) {
+    console.error('Screen error at', window.location.pathname, error);
+  }
+
   render() {
     if (!this.state.failed) return this.props.children;
     return (
