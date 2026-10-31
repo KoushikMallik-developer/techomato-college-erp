@@ -151,6 +151,7 @@ function ExamManager({ exam, onChange }) {
         await batch.commit();
       }
       const batch = writeBatch(db);
+      audit(batch, { iid, uid }, 'PAPER_REMOVED', 'examSubjects', es.id, { subject: es.subjectName, marksDeleted: marks.length });
       batch.delete(tdoc(iid, 'examSubjects', es.id));
       await batch.commit();
       reload();
