@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { sendPasswordResetEmail, signInWithEmailAndPassword } from 'firebase/auth';
 import { auth } from '../../lib/firebase';
 import { Alert, Button, Input, useAction } from '../../components/ui';
@@ -20,6 +21,7 @@ export default function Login() {
   return (
     <div className="login">
       <form className="card" onSubmit={submit}>
+        <Link to="/">← Back to home</Link>
         <h1>Techomato College ERP</h1>
         <p className="muted">Sign in with the email your college gave you.</p>
         <Alert kind="error">{error || accountError}</Alert>

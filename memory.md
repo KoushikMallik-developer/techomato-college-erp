@@ -16,6 +16,8 @@ Notes on decisions and state, so a new session can continue without re-deriving 
 - **Files are stored inside Firestore** (decided: the user chose "only Firebase, stay on Spark" over Firebase Storage, which needs Blaze). Each file is a metadata document plus a content document holding `bytes`, 900 KB max, slots f01-f05 / m01-m20. Cloudflare R2 and its Worker were removed.
 - **File features:** student documents (admins upload), faculty's own documents, and class materials (a teacher uploads for a class they teach; enrolled students read).
 
+- **Landing page** at `/` for visitors (plain CSS, `src/features/landing/`), sign-in at `/login`. It renders without waiting for Firebase auth. No testimonials or statistics (none exist); the hero illustration is labelled sample data.
+
 ## Decisions I made and the user did not object to
 - Faculty uploading into a specific student's record was **not** added. Rules cannot check "this is my student", so any faculty member could upload to any student.
 - "No payment system" was read as removing all fee tracking, not only payments.

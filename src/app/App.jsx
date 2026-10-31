@@ -5,6 +5,7 @@ import { Button, Loading } from '../components/ui';
 import ErrorBoundary from '../components/ErrorBoundary';
 import { ROLES, isAdminRole } from '../lib/tenant';
 import Login from '../features/auth/Login';
+const Landing = lazy(() => import('../features/landing/Landing'));
 const Dashboard = lazy(() => import('../features/dashboard/Dashboard'));
 const Colleges = lazy(() => import('../features/platform/Colleges'));
 const Students = lazy(() => import('../features/students/Students'));
@@ -100,8 +101,21 @@ function Shell() {
 }
 
 export default function App() {
-  const { loading, user, profile } = useCtx();
-  if (loading) return <Loading />;
-  if (!user || !profile) return <Login />;
+  const { loading, user, profile, error } = useCtx();
+  const { pathname } = useLocation();
+  // The public pages must not wait for Firebase to answer. A deep link into the app still waits, so it is not lost.
+  if (loading && pathname !== '/' && pathname !== '/login') return <Loading />;
+  if (loading || !user || !profile) {
+    // Visitors get the landing page; sign-in lives at /login. A rejected account (inactive, suspended) goes straight there to see why.
+    return (
+      <Suspense fallback={<Loading />}>
+        <Routes>
+          <Route path="/" element={error ? <Navigate to="/login" replace /> : <Landing />} />
+          <Route path="/login" element={<Login />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </Suspense>
+    );
+  }
   return <Shell />;
 }

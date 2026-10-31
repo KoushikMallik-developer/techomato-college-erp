@@ -11,6 +11,10 @@ The specs are the source of truth: [product.md](product.md) (what) and [system_d
 - **Files:** a file is a small metadata document plus a content document in Firestore. The same rules that guard the records decide who may read or write the bytes. Files are limited to 900 KB each, and big photos are shrunk in the browser.
 - **Business rules** (attendance %, pass/fail, keys) are plain functions in [src/lib/calc.js](src/lib/calc.js) with unit tests.
 
+## The public page
+
+Visitors who are not signed in see a landing page at `/`; sign-in is at `/login`. It does not wait for Firebase before showing. Set `VITE_CONTACT_EMAIL` in `.env` to add a "Contact us" button (it is hidden when empty). The page makes no claims beyond what the app does and shows only labelled sample data.
+
 ## Run it locally
 
 ```bash
