@@ -36,7 +36,7 @@ npm test             # business rules + file Worker (no emulator needed)
 npm run test:rules   # Security Rules, against the Firestore emulator (needs Java)
 ```
 
-If `npm run test:rules` stops with "port taken", a Java emulator from an earlier run is still alive (seen on Windows). End that Java process, or change the port in `firebase.rules-test.json` (now 8686).
+If `npm run test:rules` stops with "port taken", a Java emulator from an earlier run is still alive (seen on Windows). End that Java process, or change the port in `firebase.rules-test.json` (now 8787).
 
 The rules tests cover tenant isolation, role limits, audit-entry reuse, attendance and marks ownership, timetable locks, enrollment-number uniqueness, file slots and status, and result privacy.
 
@@ -44,7 +44,7 @@ The rules tests cover tenant isolation, role limits, audit-entry reuse, attendan
 
 1. **Firebase (Spark):** create a project, enable Email/Password sign-in, create Firestore in production mode. Put the project ID in `.firebaserc` and the web config in `.env`. Then `npx firebase deploy --only firestore,hosting` after `npm run build`.
 2. **First Platform Admin:** run `scripts/create-platform-admin.js` with a service-account key stored outside this repo.
-3. **App Check:** register the web app with reCAPTCHA v3 in the Firebase console and put the site key in `VITE_APPCHECK_SITE_KEY`. Watch it in monitor mode first. The app and the file Worker both pass the App Check token on, so enforcing it later does not break file access.
+3. **App Check:** register the web app with reCAPTCHA v3 in the Firebase console and put the site key in `VITE_APPCHECK_SITE_KEY`. Watch it in monitor mode first. The app and the file Worker both pass the App Check token on, so enforcing it later does not break file access. For local work, leave the site key empty in `.env` (reCAPTCHA only issues tokens for registered domains), or set a debug token in the browser as the Firebase App Check docs describe.
 4. **Files (Cloudflare):** create a private R2 bucket, set `FIREBASE_PROJECT_ID` and `ALLOWED_ORIGIN` in [worker/wrangler.toml](worker/wrangler.toml), run `npx wrangler deploy` in `worker/`, and put the Worker URL in `VITE_FILES_URL`. Without it, everything except file upload works.
 5. **Backups:** `node scripts/backup.js --institution <id>` (incremental, one college at a time). Spark has no managed backups; sync the R2 bucket with `rclone` too.
 

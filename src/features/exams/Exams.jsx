@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { addDoc, deleteDoc, getDoc, orderBy, query, serverTimestamp, setDoc, where, writeBatch } from 'firebase/firestore';
+import { addDoc, getDoc, orderBy, query, serverTimestamp, setDoc, where, writeBatch } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { useCtx } from '../../app/AuthProvider';
 import { ROLES, tcol, tdoc } from '../../lib/tenant';
@@ -140,7 +140,16 @@ function ExamManager({ exam, onChange }) {
 
   const removePaper = (es) =>
     action.run(async () => {
-      await deleteDoc(tdoc(iid, 'examSubjects', es.id));
+      // Its marks go too: the paper's id is reused if the subject is added again, which would bring old marks back.
+      const marks = data.marks.filter((m) => m.examSubjectId === es.id);
+      for (const part of chunk(marks, 450)) {
+        const batch = writeBatch(db);
+        part.forEach((m) => batch.delete(tdoc(iid, 'studentMarks', m.id)));
+        await batch.commit();
+      }
+      const batch = writeBatch(db);
+      batch.delete(tdoc(iid, 'examSubjects', es.id));
+      await batch.commit();
       reload();
     });
 

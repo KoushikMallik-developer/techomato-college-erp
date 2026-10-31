@@ -404,6 +404,15 @@ describe('admin clean-up, locks after publish, and the rest of the rules', () =>
     await assertFails(deleteDoc(doc(as('ca1'), ...P('c1', 'examSubjects', 'es2'))));
   });
 
+  it('a paper can be removed together with its marks while the exam is a draft', async () => {
+    await env.withSecurityRulesDisabled((ctx) => setDoc(doc(ctx.firestore(), ...P('c1', 'studentMarks', 'es1_s1')), marksDoc));
+    const db = as('ca1');
+    const b = writeBatch(db);
+    b.delete(doc(db, ...P('c1', 'studentMarks', 'es1_s1')));
+    b.delete(doc(db, ...P('c1', 'examSubjects', 'es1')));
+    await assertSucceeds(b.commit());
+  });
+
   it('class sessions: only the assigned teacher, with the right id', async () => {
     const session = { assignmentId: 'a1', sectionId: 'sec1', subjectId: 'sub1', facultyId: 'f1', date: '2026-10-31', period: 1, presentCount: 1 };
     await assertSucceeds(setDoc(doc(as('fac1'), ...P('c1', 'classSessions', 'a1_2026-10-31_1')), session));
