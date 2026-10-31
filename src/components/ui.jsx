@@ -103,7 +103,8 @@ export function Modal({ title, onClose, children }) {
 }
 
 // columns: [{ key, label, render? }]
-export function Table({ columns, rows, empty = 'Nothing here yet.', actions }) {
+// rows is undefined when the load failed; the screen shows the error above, so draw an empty table, not a crash.
+export function Table({ columns, rows = [], empty = 'Nothing here yet.', actions }) {
   if (!rows.length) return <p className="muted">{empty}</p>;
   return (
     <div className="table-wrap">
