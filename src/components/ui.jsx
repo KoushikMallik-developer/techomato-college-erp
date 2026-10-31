@@ -163,7 +163,7 @@ export function useAction() {
       setBusy(false);
     }
   }, []);
-  return { busy, error, done, run, setError };
+  return { busy, error, done, run };
 }
 
 export function friendly(e) {
@@ -178,7 +178,7 @@ export function friendly(e) {
 export function useForm(initial) {
   const [values, setValues] = useState(initial);
   const bind = (name) => ({ value: values[name], onChange: (v) => setValues((s) => ({ ...s, [name]: v })) });
-  return { values, bind, set: setValues, reset: () => setValues(initial) };
+  return { values, bind, set: setValues };
 }
 
 export const toOptions = (docs, label = 'name') => docs.map((d) => ({ value: d.id, label: d[label] ?? d.id }));

@@ -57,7 +57,7 @@ export async function handle(request, env) {
   const m = url.pathname.match(/^\/files\/([^/]+)\/([^/]+)\/([^/]+)\/([^/]+)$/);
   if (!m) return json({ error: 'not found' }, 404, cors);
   const [, iid, collection, owner, docId] = m;
-  if (!KINDS[collection] || ![iid, owner, docId].every((p) => SAFE.test(p))) {
+  if (!Object.hasOwn(KINDS, collection) || ![iid, owner, docId].every((p) => SAFE.test(p))) {
     return json({ error: 'bad path' }, 400, cors);
   }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { attendanceBySubject, computeResult, enrollmentKey, percent, planAttendanceWrites, recordKey, roomKey, todayIn, validTimeZone } from '../src/lib/calc';
+import { attendanceBySubject, checkExam, computeResult, enrollmentKey, percent, planAttendanceWrites, recordKey, roomKey, todayIn, validTimeZone } from '../src/lib/calc';
 
 describe('attendance', () => {
   it('excludes leave from the percentage', () => {
@@ -70,5 +70,26 @@ describe('attendance write plan', () => {
     const plan = planAttendanceWrites(roster, saved, 'd2_1', () => 'ABSENT');
     expect(plan.map((p) => [p.student.studentId, p.kind])).toEqual([['s1', 'create'], ['s2', 'add'], ['s3', 'edit']]);
     expect(plan[2].old).toBe('PRESENT');
+  });
+});
+
+describe('publish gate', () => {
+  it('finds missing marks and marks under the wrong section, and passes a complete exam', () => {
+    const enrollments = [
+      { studentId: 's1', sectionId: 'A', enrollmentNumber: '1', studentName: 'One' },
+      { studentId: 's2', sectionId: 'A', enrollmentNumber: '2', studentName: 'Two' },
+      { studentId: 's3', sectionId: 'A', enrollmentNumber: '3', studentName: 'Three' },
+    ];
+    const examSubjects = [{ id: 'p1', subjectName: 'Maths' }];
+    const marks = [
+      { id: 'p1_s1', sectionId: 'A' }, // fine
+      { id: 'p1_s2', sectionId: 'B' }, // entered under another section
+      // s3 has none
+    ];
+    const r = checkExam({ enrollments, examSubjects, marks });
+    expect(r.gaps.map((g) => g.student)).toEqual(['3 Three']);
+    expect(r.wrongSection.map((w) => w.id)).toEqual(['p1_s2']);
+    const ok = checkExam({ enrollments: enrollments.slice(0, 1), examSubjects, marks });
+    expect([ok.gaps.length, ok.wrongSection.length]).toEqual([0, 0]);
   });
 });

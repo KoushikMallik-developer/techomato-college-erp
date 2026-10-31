@@ -1,7 +1,8 @@
 import { Suspense, lazy, useState } from 'react';
-import { NavLink, Navigate, Route, Routes } from 'react-router-dom';
+import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { useCtx } from './AuthProvider';
 import { Button, Loading } from '../components/ui';
+import ErrorBoundary from '../components/ErrorBoundary';
 import { ROLES, isAdminRole } from '../lib/tenant';
 import Login from '../features/auth/Login';
 const Dashboard = lazy(() => import('../features/dashboard/Dashboard'));
@@ -47,6 +48,7 @@ function navFor(role) {
 function Shell() {
   const { role, profile, institution, logout } = useCtx();
   const [open, setOpen] = useState(false);
+  const { pathname } = useLocation();
   const admin = isAdminRole(role);
   return (
     <div className="shell">
@@ -65,6 +67,7 @@ function Shell() {
         </div>
       </aside>
       <main className="main">
+        <ErrorBoundary key={pathname} onSignOut={logout}>
         <Suspense fallback={<Loading />}>
         <Routes>
           {role === ROLES.PLATFORM_ADMIN ? (
@@ -90,6 +93,7 @@ function Shell() {
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
         </Suspense>
+        </ErrorBoundary>
       </main>
     </div>
   );

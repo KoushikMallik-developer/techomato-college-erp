@@ -4,7 +4,7 @@ import { db } from '../../lib/firebase';
 import { useCtx } from '../../app/AuthProvider';
 import { ROLES, tcol, tdoc } from '../../lib/tenant';
 import { audit } from '../../lib/audit';
-import { computeResult, toCsv } from '../../lib/calc';
+import { checkExam, computeResult, toCsv } from '../../lib/calc';
 import { byId, chunk, list } from '../../lib/data';
 import { Alert, Badge, Button, Input, Loading, Modal, PageHeader, Select, Table, toOptions, downloadCsv, useAction, useAsync, useForm } from '../../components/ui';
 
@@ -108,22 +108,6 @@ async function loadExam(iid, exam) {
     list(query(tcol(iid, 'studentMarks'), where('examId', '==', exam.id))),
   ]);
   return { examSubjects, enrollments: enrollments.filter((e) => e.status !== 'WITHDRAWN'), marks };
-}
-
-// Every enrolled student needs a marks record (or an absent mark) for every paper before publishing.
-function checkExam(data) {
-  const marksById = byId(data.marks);
-  const gaps = [];
-  const wrongSection = [];
-  for (const en of data.enrollments) {
-    for (const es of data.examSubjects) {
-      const m = marksById[`${es.id}_${en.studentId}`];
-      const who = `${en.enrollmentNumber} ${en.studentName}`;
-      if (!m) gaps.push({ id: `${en.studentId}${es.id}`, student: who, paper: es.subjectName });
-      else if (m.sectionId !== en.sectionId) wrongSection.push({ id: m.id, student: who, paper: es.subjectName });
-    }
-  }
-  return { marksById, gaps, wrongSection };
 }
 
 function ExamManager({ exam, onChange }) {

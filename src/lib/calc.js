@@ -67,6 +67,23 @@ export function validTimeZone(timeZone) {
   }
 }
 
+// Every enrolled student needs a marks record (or an absent mark) for every paper before results publish.
+// Marks ids are {paperId}_{studentId}; a record under another section than the student's enrollment is flagged.
+export function checkExam({ enrollments, examSubjects, marks }) {
+  const marksById = Object.fromEntries(marks.map((m) => [m.id, m]));
+  const gaps = [];
+  const wrongSection = [];
+  for (const en of enrollments) {
+    for (const es of examSubjects) {
+      const m = marksById[`${es.id}_${en.studentId}`];
+      const who = `${en.enrollmentNumber} ${en.studentName}`;
+      if (!m) gaps.push({ id: `${en.studentId}${es.id}`, student: who, paper: es.subjectName });
+      else if (m.sectionId !== en.sectionId) wrongSection.push({ id: m.id, student: who, paper: es.subjectName });
+    }
+  }
+  return { marksById, gaps, wrongSection };
+}
+
 // Calendar date (YYYY-MM-DD) in the college's time zone.
 export function todayIn(timeZone, now = new Date()) {
   return new Intl.DateTimeFormat('en-CA', { timeZone }).format(now);

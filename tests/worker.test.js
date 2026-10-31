@@ -36,8 +36,10 @@ describe('file worker', () => {
   });
 
   it('refuses a path that is not one of the three file kinds', async () => {
-    const res = await handle(new Request('https://w.example/files/c1/secrets/s1/f01', { headers: { authorization: 'Bearer x' } }), env(bucket()));
-    expect(res.status).toBe(400);
+    for (const kind of ['secrets', 'constructor', '__proto__']) {
+      const res = await handle(new Request(`https://w.example/files/c1/${kind}/s1/f01`, { headers: { authorization: 'Bearer x' } }), env(bucket()));
+      expect(res.status).toBe(400);
+    }
   });
 
   it('only serves READY files, as attachments', async () => {

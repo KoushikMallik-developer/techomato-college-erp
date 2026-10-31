@@ -49,7 +49,6 @@ export function AuthProvider({ children }) {
       uid: user?.uid,
       role: profile?.role,
       iid: profile?.institutionId,
-      timezone: tz,
       today: () => todayIn(tz),
       logout: () => signOut(auth),
     };
