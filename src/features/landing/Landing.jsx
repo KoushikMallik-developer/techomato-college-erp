@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom';
+import { useCtx } from '../../app/AuthProvider';
 import './landing.css';
 
 const CONTACT = import.meta.env.VITE_CONTACT_EMAIL;
@@ -93,6 +94,8 @@ function Register() {
 }
 
 export default function Landing() {
+  const ctx = useCtx();
+  const [to, label] = ctx?.user && ctx?.profile ? ['/dashboard', 'Open dashboard'] : ['/login', 'Sign in'];
   return (
     <div className="lp">
       <a className="lp-skip" href="#main">Skip to content</a>
@@ -104,7 +107,7 @@ export default function Landing() {
             <a href="#how">How it works</a>
             <a href="#roles">Who it is for</a>
           </nav>
-          <Link to="/login" className="lp-btn lp-btn-solid lp-btn-sm">Sign in</Link>
+          <Link to={to} className="lp-btn lp-btn-solid lp-btn-sm">{label}</Link>
         </div>
       </header>
 
@@ -119,7 +122,7 @@ export default function Landing() {
                 replace paper registers and scattered files, and simple enough to use on day one.
               </p>
               <div className="lp-cta">
-                <Link to="/login" className="lp-btn lp-btn-solid">Sign in to your college</Link>
+                <Link to={to} className="lp-btn lp-btn-solid">{ctx?.user && ctx?.profile ? label : 'Sign in to your college'}</Link>
                 {CONTACT
                   ? <a href={`mailto:${CONTACT}`} className="lp-btn lp-btn-ghost">Contact us</a>
                   : <a href="#features" className="lp-btn lp-btn-ghost">See what it does</a>}
@@ -200,7 +203,7 @@ export default function Landing() {
             <h2>Ready when you are</h2>
             <p className="lp-sub">Your college admin gives you your login. Sign in to get started.</p>
             <div className="lp-cta lp-center">
-              <Link to="/login" className="lp-btn lp-btn-solid">Sign in</Link>
+              <Link to={to} className="lp-btn lp-btn-solid">{label}</Link>
               {CONTACT && <a href={`mailto:${CONTACT}`} className="lp-btn lp-btn-ghost">Contact us</a>}
             </div>
           </div>
@@ -210,7 +213,7 @@ export default function Landing() {
       <footer className="lp-foot">
         <div className="lp-wrap lp-foot-in">
           <span>© {new Date().getFullYear()} Techomato College ERP</span>
-          <Link to="/login">Sign in</Link>
+          <Link to={to}>{label}</Link>
         </div>
       </footer>
     </div>

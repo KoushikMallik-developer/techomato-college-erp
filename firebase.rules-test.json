@@ -1,4 +1,4 @@
 {
   "firestore": { "rules": "firestore.rules", "indexes": "firestore.indexes.json" },
-  "emulators": { "firestore": { "port": 9595 }, "ui": { "enabled": false } }
+  "emulators": { "firestore": { "port": 9696 }, "ui": { "enabled": false } }
 }

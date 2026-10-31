@@ -23,7 +23,7 @@ export function AuthProvider({ children }) {
         try {
           const snap = await getDoc(doc(db, 'users', user.uid));
           const profile = snap.exists() ? snap.data() : null;
-          if (!profile || !profile.active) return reject('This account is not active. Contact your college admin.');
+          if (!profile || profile.active !== true) return reject('This account is not active. Contact your college admin.');
           let institution = null;
           if (profile.role !== 'PLATFORM_ADMIN') {
             try {

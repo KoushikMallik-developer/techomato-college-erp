@@ -24,8 +24,8 @@ const Settings = lazy(() => import('../features/users/Settings'));
 const Profile = lazy(() => import('../features/users/Profile'));
 
 function navFor(role) {
-  if (role === ROLES.PLATFORM_ADMIN) return [['/', 'Colleges'], ['/admins', 'Platform admins']];
-  const common = [['/', 'Dashboard']];
+  if (role === ROLES.PLATFORM_ADMIN) return [['/dashboard', 'Colleges'], ['/admins', 'Platform admins']];
+  const common = [['/dashboard', 'Dashboard']];
   if (isAdminRole(role)) {
     return [
       ...common,
@@ -59,7 +59,7 @@ function Shell() {
         <div className="brand">{institution?.name ?? 'Techomato ERP'}</div>
         <nav aria-label="Main">
           {navFor(role).map(([to, label]) => (
-            <NavLink key={to} to={to} end={to === '/'} onClick={() => setOpen(false)}>{label}</NavLink>
+            <NavLink key={to} to={to} onClick={() => setOpen(false)}>{label}</NavLink>
           ))}
         </nav>
         <div className="who">
@@ -74,12 +74,12 @@ function Shell() {
         <Routes>
           {role === ROLES.PLATFORM_ADMIN ? (
             <>
-              <Route path="/" element={<Colleges />} />
+              <Route path="/dashboard" element={<Colleges />} />
               <Route path="/admins" element={<PlatformAdmins />} />
             </>
           ) : (
             <>
-              <Route path="/" element={<Dashboard />} />
+              <Route path="/dashboard" element={<Dashboard />} />
               <Route path="/timetable" element={<Timetable />} />
               <Route path="/attendance" element={<Attendance />} />
               <Route path="/exams" element={<Exams />} />
@@ -95,7 +95,7 @@ function Shell() {
               {!admin && <Route path="/profile" element={<Profile />} />}
             </>
           )}
-          <Route path="*" element={<Navigate to="/" replace />} />
+          <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>
         </Suspense>
         </ErrorBoundary>
@@ -105,21 +105,17 @@ function Shell() {
 }
 
 export default function App() {
-  const { loading, user, profile, error } = useCtx();
-  const { pathname } = useLocation();
-  // The public pages must not wait for Firebase to answer. A deep link into the app still waits, so it is not lost.
-  if (loading && pathname !== '/' && pathname !== '/login') return <Loading />;
-  if (loading || !user || !profile) {
-    // Visitors get the landing page; sign-in lives at /login. A rejected account (inactive, suspended) goes straight there to see why.
-    return (
-      <Suspense fallback={<Loading />}>
-        <Routes>
-          <Route path="/" element={error ? <Navigate to="/login" replace /> : <Landing />} />
-          <Route path="/login" element={<Login />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </Suspense>
-    );
-  }
-  return <Shell />;
+  const { loading, user, profile } = useCtx();
+  const signedIn = !loading && user && profile;
+  // The landing page (/) and sign-in (/login) are public for everyone and never wait for Firebase.
+  // Every other address is the app: it waits for sign-in, and a visitor is sent to /login.
+  return (
+    <Suspense fallback={<Loading />}>
+      <Routes>
+        <Route path="/" element={<Landing />} />
+        <Route path="/login" element={signedIn ? <Navigate to="/dashboard" replace /> : <Login />} />
+        <Route path="*" element={loading ? <Loading /> : signedIn ? <Shell /> : <Navigate to="/login" replace />} />
+      </Routes>
+    </Suspense>
+  );
 }

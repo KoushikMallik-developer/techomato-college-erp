@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs';
 import { afterAll, beforeAll, beforeEach, describe, it } from 'vitest';
 import { assertFails, assertSucceeds, initializeTestEnvironment } from '@firebase/rules-unit-testing';
-import { Bytes, collection, deleteDoc, doc, getDoc, getDocs, query, serverTimestamp, setDoc, updateDoc, where, writeBatch } from 'firebase/firestore';
+import { Bytes, collection, deleteDoc, doc, getDoc, getDocs, orderBy, query, serverTimestamp, setDoc, updateDoc, where, writeBatch } from 'firebase/firestore';
 
 let env;
 const P = (iid, ...rest) => ['institutions', iid, ...rest];
@@ -93,6 +93,10 @@ describe('platform admin', () => {
   it('cannot read college data', async () => {
     await assertFails(getDoc(doc(as('plat'), ...P('c1', 'students', 's1'))));
     await assertFails(getDocs(collection(as('plat'), ...P('c1', 'studentMarks'))));
+  });
+
+  it('lists colleges ordered by name', async () => {
+    await assertSucceeds(getDocs(query(collection(as('plat'), 'institutions'), orderBy('name'))));
   });
 
   it('creates a college with its first super admin in one batch', async () => {
