@@ -1,0 +1,306 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------- helpers ----------
+    function me() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+    function platform() {
+      return request.auth != null && me().active == true && me().role == 'PLATFORM_ADMIN';
+    }
+    // Signed in, active, belongs to this college, and the college is not suspended.
+    function tenantOk(iid) {
+      return request.auth != null && me().active == true && me().institutionId == iid
+        && get(/databases/$(database)/documents/institutions/$(iid)).data.status == 'ACTIVE';
+    }
+    function role() { return me().role; }
+    function isAdmin(iid) { return tenantOk(iid) && role() in ['SUPER_ADMIN', 'COLLEGE_ADMIN']; }
+    function isStaff(iid) { return tenantOk(iid) && role() in ['FACULTY', 'COLLEGE_ADMIN', 'SUPER_ADMIN']; }
+    function isFaculty(iid) { return tenantOk(iid) && role() == 'FACULTY'; }
+    function isStudent(iid) { return tenantOk(iid) && role() == 'STUDENT'; }
+    // Roles the caller may create or change. Nobody can grant SUPER_ADMIN or PLATFORM_ADMIN here.
+    function manageable(r) {
+      return r in ['FACULTY', 'STUDENT'] || (role() == 'SUPER_ADMIN' && r == 'COLLEGE_ADMIN');
+    }
+    // The audit entry must be created in this batch; an old entry cannot be reused.
+    function newAudit(iid, id) {
+      return !exists(/databases/$(database)/documents/institutions/$(iid)/auditLogs/$(id))
+        && existsAfter(/databases/$(database)/documents/institutions/$(iid)/auditLogs/$(id));
+    }
+    function newPlatformAudit(id) {
+      return !exists(/databases/$(database)/documents/platformAuditLogs/$(id))
+        && existsAfter(/databases/$(database)/documents/platformAuditLogs/$(id));
+    }
+
+    // ---------- platform ----------
+    match /platformAuditLogs/{id} {
+      allow create: if platform() && request.resource.data.actorUid == request.auth.uid
+        && request.resource.data.timestamp == request.time;
+      allow read: if platform();
+    }
+
+    match /users/{uid} {
+      allow read: if request.auth != null && (request.auth.uid == uid || platform()
+        || isAdmin(resource.data.institutionId));
+      allow create: if
+        // Platform Admin: only the first Super Admin, only in the batch that creates the college.
+        (platform() && request.resource.data.role == 'SUPER_ADMIN'
+          && !exists(/databases/$(database)/documents/institutions/$(request.resource.data.institutionId))
+          && existsAfter(/databases/$(database)/documents/institutions/$(request.resource.data.institutionId))
+          && newPlatformAudit(request.resource.data.auditId))
+        || (isAdmin(request.resource.data.institutionId)
+          && manageable(request.resource.data.role)
+          && newAudit(request.resource.data.institutionId, request.resource.data.auditId));
+      allow update: if request.auth.uid != uid
+        && request.resource.data.institutionId == resource.data.institutionId
+        && request.resource.data.role == resource.data.role
+        && (
+          (platform() && resource.data.role == 'SUPER_ADMIN'
+            && newPlatformAudit(request.resource.data.auditId))
+          || (isAdmin(resource.data.institutionId) && manageable(resource.data.role)
+            && newAudit(resource.data.institutionId, request.resource.data.auditId)));
+    }
+
+    // ---------- one college ----------
+    match /institutions/{iid} {
+      allow read: if tenantOk(iid) || platform();
+      allow create: if platform() && request.resource.data.status == 'ACTIVE'
+        && newPlatformAudit(request.resource.data.auditId);
+      allow update: if (platform() && newPlatformAudit(request.resource.data.auditId))
+        || (tenantOk(iid) && role() == 'SUPER_ADMIN'
+          && request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly(['name', 'address', 'contact', 'timezone', 'academicSettings', 'updatedAt']));
+
+      function assignment(id) {
+        return get(/databases/$(database)/documents/institutions/$(iid)/teachingAssignments/$(id)).data;
+      }
+
+      // File IDs are fixed slots, so rules cap the files per folder: f01-f20 (students, faculty),
+      // m001-m100 (class materials).
+      function validSlot(collection, docId) {
+        return collection == 'teachingAssignments'
+          ? docId.matches('m(00[1-9]|0[1-9][0-9]|100)')
+          : docId.matches('f(0[1-9]|1[0-9]|20)');
+      }
+      function newFile(collection, ownerId, docId, maxSize) {
+        return validSlot(collection, docId)
+          && request.resource.data.objectKey == iid + '/' + collection + '/' + ownerId + '/' + docId
+          && request.resource.data.uploadedBy == request.auth.uid
+          && request.resource.data.status == 'PENDING'
+          && request.resource.data.size <= maxSize
+          && request.resource.data.contentType in ['application/pdf', 'image/jpeg', 'image/png'];
+      }
+      // Allowed moves: PENDING to READY, READY to DELETED, PENDING to DELETED. Nothing leaves DELETED.
+      function fileStatusChange() {
+        return ((resource.data.status == 'PENDING' && request.resource.data.status in ['READY', 'DELETED'])
+            || (resource.data.status == 'READY' && request.resource.data.status == 'DELETED'))
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt']);
+      }
+      // The metadata document goes only after the Worker removed the object (status DELETED).
+      function fileDeletable() { return resource.data.status == 'DELETED'; }
+
+      // Reference data any active user of the college may read.
+      match /{refCol}/{id} {
+        allow read: if refCol in ['departments', 'courses', 'subjects', 'academicYears', 'semesters',
+            'sections', 'timetableSlots', 'exams', 'examSubjects', 'announcements'] && tenantOk(iid);
+        allow write: if refCol in ['departments', 'courses', 'subjects', 'academicYears', 'semesters',
+            'sections', 'exams', 'examSubjects', 'announcements'] && isAdmin(iid);
+      }
+
+      match /students/{studentId} {
+        allow read: if isAdmin(iid) || (isStudent(iid) && me().studentId == studentId);
+        allow create: if isAdmin(iid)
+          && request.resource.data.enrollmentKey == request.resource.data.enrollmentNumber.upper().trim()
+          && existsAfter(/databases/$(database)/documents/institutions/$(iid)/enrollmentNumberIndex/$(request.resource.data.enrollmentKey));
+        allow update: if isAdmin(iid)
+          && request.resource.data.enrollmentNumber == resource.data.enrollmentNumber
+          && request.resource.data.enrollmentKey == resource.data.enrollmentKey;
+        // No delete: deactivate with status instead (history is kept).
+
+        match /documents/{docId} {
+          allow read: if isAdmin(iid) || (isStudent(iid) && me().studentId == studentId);
+          allow create: if isAdmin(iid) && newFile('students', studentId, docId, 1048576);
+          allow update: if isAdmin(iid) && fileStatusChange();
+          allow delete: if isAdmin(iid) && fileDeletable();
+        }
+      }
+
+      match /enrollmentNumberIndex/{key} {
+        allow read: if isAdmin(iid);
+        allow create: if isAdmin(iid);   // create-only: a number can never be reused
+      }
+
+      match /faculty/{facultyId} {
+        allow read: if isAdmin(iid) || (isFaculty(iid) && me().facultyId == facultyId);
+        allow create, update: if isAdmin(iid);
+
+        match /documents/{docId} {
+          function mine() {
+            return isAdmin(iid) || (isFaculty(iid) && me().facultyId == facultyId);
+          }
+          allow read: if mine();
+          allow create: if mine() && newFile('faculty', facultyId, docId, 1048576);
+          allow update: if mine() && fileStatusChange();
+          allow delete: if mine() && fileDeletable();
+        }
+      }
+
+      match /enrollments/{id} {
+        allow read: if isAdmin(iid) || isFaculty(iid)
+          || (isStudent(iid) && resource.data.studentId == me().studentId);
+        allow write: if isAdmin(iid);
+      }
+
+      match /teachingAssignments/{assignmentId} {
+        allow read: if tenantOk(iid);
+        allow write: if isAdmin(iid);
+
+        match /documents/{docId} {
+          function teaches() {
+            return isFaculty(iid) && assignment(assignmentId).facultyId == me().facultyId;
+          }
+          // The teacher may upload only while the assignment is active (a replaced teacher cannot).
+          function mayUpload() {
+            return isAdmin(iid) || (teaches() && assignment(assignmentId).active == true);
+          }
+          // One lookup: enrollment IDs are {studentId}_{semesterId}.
+          function enrolled() {
+            let e = get(/databases/$(database)/documents/institutions/$(iid)/enrollments/$(me().studentId + '_' + assignment(assignmentId).semesterId)).data;
+            return isStudent(iid)
+              && e.sectionId == assignment(assignmentId).sectionId && e.status != 'WITHDRAWN';
+          }
+          allow read: if isAdmin(iid) || teaches() || enrolled();
+          allow create: if mayUpload() && newFile('teachingAssignments', assignmentId, docId, 2097152);
+          allow update: if mayUpload() && fileStatusChange();
+          allow delete: if mayUpload() && fileDeletable();
+        }
+      }
+
+      match /timetableLocks/{id} {
+        allow read: if isAdmin(iid);
+        allow create, delete: if isAdmin(iid);   // never update
+      }
+
+      match /timetableSlots/{id} {
+        // Each lock must exist after the batch AND name this slot, so a slot cannot
+        // be created or moved onto a place another slot already holds.
+        function lock(t, key) {
+          return /databases/$(database)/documents/institutions/$(iid)/timetableLocks/$(t + '_' + key + '_' + string(request.resource.data.dayOfWeek) + '_' + string(request.resource.data.period));
+        }
+        allow create, update: if isAdmin(iid)
+          && request.resource.data.roomKey == request.resource.data.room.lower().trim()
+          && !request.resource.data.roomKey.matches('.*/.*')
+          && getAfter(lock('room', request.resource.data.roomKey)).data.slotId == id
+          && getAfter(lock('faculty', request.resource.data.facultyId)).data.slotId == id
+          && getAfter(lock('section', request.resource.data.sectionId)).data.slotId == id;
+        allow delete: if isAdmin(iid);
+      }
+
+      // One entry per write: new entries are free, changing an existing one needs a new audit entry.
+      function oneEntryChange() {
+        let d = request.resource.data.records.diff(resource.data.records);
+        return d.affectedKeys().size() == 1 && d.removedKeys().size() == 0
+          && (d.addedKeys().size() == 1 || newAudit(iid, request.resource.data.auditId));
+      }
+
+      match /studentAttendance/{id} {
+        allow read: if isAdmin(iid)
+          || (isFaculty(iid) && resource.data.facultyId == me().facultyId)
+          || (isStudent(iid) && resource.data.studentId == me().studentId);
+        allow create: if isFaculty(iid)
+          && request.resource.data.facultyId == me().facultyId
+          && id == request.resource.data.studentId + '_' + request.resource.data.assignmentId
+          && assignment(request.resource.data.assignmentId).facultyId == me().facultyId
+          && assignment(request.resource.data.assignmentId).active == true
+          && assignment(request.resource.data.assignmentId).sectionId == request.resource.data.sectionId
+          && assignment(request.resource.data.assignmentId).subjectId == request.resource.data.subjectId
+          && assignment(request.resource.data.assignmentId).semesterId == request.resource.data.semesterId
+          && request.resource.data.records.size() == 1
+          && request.resource.data.records.values().hasOnly(['PRESENT', 'ABSENT', 'LEAVE']);
+        allow update: if isFaculty(iid)
+          && assignment(resource.data.assignmentId).facultyId == me().facultyId
+          && assignment(resource.data.assignmentId).active == true
+          && request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly(['records', 'updatedBy', 'updatedAt', 'auditId'])
+          && request.resource.data.records.values().hasOnly(['PRESENT', 'ABSENT', 'LEAVE'])
+          && oneEntryChange();
+      }
+
+      match /classSessions/{id} {
+        allow read: if isAdmin(iid) || (isFaculty(iid) && resource.data.facultyId == me().facultyId);
+        allow create, update: if isFaculty(iid)
+          && request.resource.data.facultyId == me().facultyId
+          && id == request.resource.data.assignmentId + '_' + request.resource.data.date + '_' + string(request.resource.data.period)
+          && assignment(request.resource.data.assignmentId).facultyId == me().facultyId
+          && assignment(request.resource.data.assignmentId).active == true
+          && assignment(request.resource.data.assignmentId).sectionId == request.resource.data.sectionId
+          && assignment(request.resource.data.assignmentId).subjectId == request.resource.data.subjectId;
+      }
+
+      match /facultyAttendance/{id} {
+        allow read: if isAdmin(iid) || (isFaculty(iid) && resource.data.facultyId == me().facultyId);
+        allow create, update: if isAdmin(iid)
+          && id == request.resource.data.facultyId + '_' + request.resource.data.date
+          && request.resource.data.status in ['PRESENT', 'ABSENT', 'LEAVE'];
+      }
+
+      match /studentMarks/{id} {
+        function examSubject() {
+          return get(/databases/$(database)/documents/institutions/$(iid)/examSubjects/$(request.resource.data.examSubjectId)).data;
+        }
+        function exam() {
+          return get(/databases/$(database)/documents/institutions/$(iid)/exams/$(examSubject().examId)).data;
+        }
+        function validMarks() {
+          return request.resource.data.absent == true
+            || (request.resource.data.marks is number
+                && request.resource.data.marks >= 0 && request.resource.data.marks <= examSubject().maxMarks);
+        }
+        allow read: if isAdmin(iid)
+          || (isFaculty(iid) && resource.data.enteredBy == request.auth.uid);
+        allow create: if isFaculty(iid)
+          && id == request.resource.data.examSubjectId + '_' + request.resource.data.studentId
+          && request.resource.data.examId == examSubject().examId
+          && request.resource.data.enteredBy == request.auth.uid
+          && exam().status == 'DRAFT'
+          && assignment(request.resource.data.assignmentId).facultyId == me().facultyId
+          && assignment(request.resource.data.assignmentId).active == true
+          && assignment(request.resource.data.assignmentId).subjectId == examSubject().subjectId
+          && assignment(request.resource.data.assignmentId).semesterId == exam().semesterId
+          && assignment(request.resource.data.assignmentId).sectionId == request.resource.data.sectionId
+          && validMarks();
+        allow update: if isFaculty(iid)
+          && assignment(resource.data.assignmentId).facultyId == me().facultyId
+          && assignment(resource.data.assignmentId).active == true
+          && request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly(['marks', 'absent', 'updatedAt'])
+          && exam().status == 'DRAFT'
+          && validMarks();
+        // students: no access
+      }
+
+      match /results/{id} {
+        // IDs are {examId}_{studentId}. A student can fetch only their own result by ID, and only once the
+        // exam is published. Deciding from the ID (not the document) also works when no result exists.
+        allow get: if isAdmin(iid) || (isStudent(iid)
+          && id == id.split('_')[0] + '_' + me().studentId
+          && get(/databases/$(database)/documents/institutions/$(iid)/exams/$(id.split('_')[0])).data.status == 'PUBLISHED');
+        allow list: if isAdmin(iid);
+        allow create, update: if isAdmin(iid)
+          && get(/databases/$(database)/documents/institutions/$(iid)/exams/$(request.resource.data.examId)).data.status == 'DRAFT';
+      }
+
+      match /auditLogs/{logId} {
+        allow create: if isStaff(iid)
+          && request.resource.data.actorUid == request.auth.uid
+          && request.resource.data.timestamp == request.time;
+        allow read: if isAdmin(iid);
+      }
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

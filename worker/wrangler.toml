@@ -1,0 +1,11 @@
+name = "techomato-files"
+main = "src/index.js"
+compatibility_date = "2025-01-01"
+
+[vars]
+FIREBASE_PROJECT_ID = "your-firebase-project-id"
+ALLOWED_ORIGIN = "https://your-app.web.app"
+
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "techomato-files"
