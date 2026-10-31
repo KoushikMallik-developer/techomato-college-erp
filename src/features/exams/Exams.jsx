@@ -145,15 +145,17 @@ function ExamManager({ exam, onChange }) {
       const marks = await list(query(tcol(iid, 'studentMarks'), where('examSubjectId', '==', es.id)));
       const warning = marks.length ? ` and the ${marks.length} marks already entered for it` : '';
       if (!window.confirm(`Remove ${es.subjectName}${warning}? This cannot be undone.`)) return;
-      for (const part of chunk(marks, 450)) {
-        const batch = writeBatch(db);
-        part.forEach((m) => batch.delete(tdoc(iid, 'studentMarks', m.id)));
-        await batch.commit();
-      }
-      const batch = writeBatch(db);
-      audit(batch, { iid, uid }, 'PAPER_REMOVED', 'examSubjects', es.id, { subject: es.subjectName, marksDeleted: marks.length });
-      batch.delete(tdoc(iid, 'examSubjects', es.id));
-      await batch.commit();
+      const batches = chunk(marks, 450).map((part) => {
+        const b = writeBatch(db);
+        part.forEach((m) => b.delete(tdoc(iid, 'studentMarks', m.id)));
+        return b;
+      });
+      const last = writeBatch(db);
+      last.delete(tdoc(iid, 'examSubjects', es.id));
+      batches.push(last);
+      // The log entry rides in the first batch, so anything that gets deleted is also logged.
+      audit(batches[0], { iid, uid }, 'PAPER_REMOVED', 'examSubjects', es.id, { subject: es.subjectName, marksDeleted: marks.length });
+      for (const b of batches) await b.commit();
       reload();
     });
 
