@@ -153,6 +153,16 @@ function ExamManager({ exam, onChange }) {
       onChange();
     }, 'Results published.');
 
+  // Admin clean-up of a stray or wrong marks record while the exam is a draft; the right teacher re-enters it.
+  const removeMark = (w) =>
+    action.run(async () => {
+      const batch = writeBatch(db);
+      audit(batch, { iid, uid }, 'MARKS_RECORD_REMOVED', 'studentMarks', w.id, { student: w.student, paper: w.paper });
+      batch.delete(tdoc(iid, 'studentMarks', w.id));
+      await batch.commit();
+      reload();
+    });
+
   const unpublish = () =>
     action.run(async () => {
       const batch = writeBatch(db);
@@ -202,7 +212,16 @@ function ExamManager({ exam, onChange }) {
           )}
           {wrongSection.length > 0 && (
             <Alert kind="error">
-              {wrongSection.length} marks were entered for a different section than the student's enrollment. Check them with the faculty first.
+              {wrongSection.length} marks were entered for a different section than the student's enrollment. Remove each
+              one; the teacher of that section then enters it again.
+              <ul>
+                {wrongSection.slice(0, 10).map((w) => (
+                  <li key={w.id}>
+                    {w.student} — {w.paper}{' '}
+                    <Button small variant="danger" disabled={action.busy} onClick={() => removeMark(w)}>Remove record</Button>
+                  </li>
+                ))}
+              </ul>
             </Alert>
           )}
           <p className="muted">Publishing writes {resultCount} result records, against the shared daily free quota. Avoid doing it on a heavy marks-entry day.</p>

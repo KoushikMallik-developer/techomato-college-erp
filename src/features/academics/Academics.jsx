@@ -147,6 +147,7 @@ function AssignForm({ data, replace, onClose }) {
   const submit = (e) => {
     e.preventDefault();
     run(async () => {
+      if (replace && values.facultyId === replace.facultyId) throw new Error('Choose a different teacher.');
       const section = data.SE[values.sectionId];
       const faculty = F[values.facultyId];
       const subject = data.S[values.subjectId];
@@ -159,11 +160,29 @@ function AssignForm({ data, replace, onClose }) {
       });
       if (replace) {
         batch.update(tdoc(iid, 'teachingAssignments', replace.id), { active: false, updatedAt: serverTimestamp() });
+        // Move this class's timetable slots to the new teacher: swap the faculty lock and re-point the slot.
+        const slots = await list(query(tcol(iid, 'timetableSlots'), where('assignmentId', '==', replace.id)));
+        for (const s of slots) {
+          batch.delete(tdoc(iid, 'timetableLocks', `faculty_${s.facultyId}_${s.dayOfWeek}_${s.period}`));
+          batch.set(tdoc(iid, 'timetableLocks', `faculty_${faculty.id}_${s.dayOfWeek}_${s.period}`), {
+            slotId: s.id, createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+          });
+          batch.update(tdoc(iid, 'timetableSlots', s.id), {
+            facultyId: faculty.id, facultyName: faculty.name, assignmentId: ref.id, updatedAt: serverTimestamp(),
+          });
+        }
       }
       audit(batch, { iid, uid }, replace ? 'ASSIGNMENT_REPLACED' : 'ASSIGNMENT_CREATED', 'teachingAssignments', ref.id, {
         facultyId: faculty.id, replaced: replace?.id ?? null,
       });
-      await batch.commit();
+      try {
+        await batch.commit();
+      } catch (err) {
+        if (err.code === 'permission-denied' && replace) {
+          throw new Error('The new teacher is already booked in one of this class timetable periods. Change that slot first.');
+        }
+        throw err;
+      }
       onClose(true);
     });
   };
@@ -172,7 +191,7 @@ function AssignForm({ data, replace, onClose }) {
     <Modal title={replace ? 'Replace teacher' : 'Assign a teacher'} onClose={() => onClose(false)}>
       <form onSubmit={submit}>
         <Alert kind="error">{error}</Alert>
-        {replace && <Alert kind="info">The current teacher loses write access to this class straight away. The new teacher starts with an empty register; earlier attendance stays with the old assignment.</Alert>}
+        {replace && <Alert kind="info">The current teacher loses write access to this class straight away. The new teacher starts with an empty register; earlier attendance stays with the old assignment. This class's timetable slots move to the new teacher.</Alert>}
         <div className="form-grid">
           <Select label="Teacher" required options={toOptions(data.faculty)} {...bind('facultyId')} />
           <Select label="Subject" required disabled={!!replace} options={toOptions(data.subjects)} {...bind('subjectId')} />

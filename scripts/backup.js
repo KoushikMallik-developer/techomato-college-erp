@@ -40,7 +40,8 @@ const out = fs.createWriteStream(outFile);
 async function exportQuery(label, query, sinceKey) {
   const since = state.since[sinceKey];
   let q = query.orderBy('updatedAt');
-  if (since) q = q.startAfter(admin.firestore.Timestamp.fromMillis(since));
+  // Inclusive: documents written in one batch share an updatedAt, so a run that stopped inside such a group must re-read it.
+  if (since) q = q.startAt(admin.firestore.Timestamp.fromMillis(since));
   let last = since;
   while (reads < maxReads) {
     const snap = await q.limit(500).get();
@@ -50,7 +51,7 @@ async function exportQuery(label, query, sinceKey) {
       last = d.get('updatedAt')?.toMillis?.() ?? last;
     }
     if (snap.size < 500) { state.since[sinceKey] = last; return true; }
-    q = query.orderBy('updatedAt').startAfter(snap.docs.at(-1).get('updatedAt'));
+    q = query.orderBy('updatedAt').startAfter(snap.docs.at(-1)); // the document itself breaks timestamp ties
     state.since[sinceKey] = last;
   }
   console.log(`Read budget reached in ${label}; run again to continue.`);

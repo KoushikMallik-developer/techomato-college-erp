@@ -380,3 +380,60 @@ describe('files and audit', () => {
     await assertFails(updateDoc(doc(as('ca1'), ...P('c1', 'auditLogs', 'old')), { actorUid: 'x' }));
   });
 });
+
+describe('admin clean-up, locks after publish, and the rest of the rules', () => {
+  const marksDoc = { examId: 'e1', examSubjectId: 'es1', assignmentId: 'a1', sectionId: 'sec2', studentId: 's1', marks: 5, absent: false, enteredBy: 'fac1' };
+
+  it('an admin can remove a stray marks record while the exam is a draft, not after, and a teacher cannot', async () => {
+    const ref = (db) => doc(db, ...P('c1', 'studentMarks', 'es1_s1'));
+    await env.withSecurityRulesDisabled((ctx) => setDoc(ref(ctx.firestore()), marksDoc));
+    await assertFails(deleteDoc(ref(as('fac1'))));
+    await assertSucceeds(deleteDoc(ref(as('ca1'))));
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(ref(ctx.firestore()), marksDoc);
+      await updateDoc(doc(ctx.firestore(), ...P('c1', 'exams', 'e1')), { status: 'PUBLISHED' });
+    });
+    await assertFails(deleteDoc(ref(as('ca1'))));
+  });
+
+  it('papers can change only while the exam is a draft', async () => {
+    await assertSucceeds(setDoc(doc(as('ca1'), ...P('c1', 'examSubjects', 'es9')), { examId: 'e1', subjectId: 'sub9', maxMarks: 50 }));
+    await assertFails(setDoc(doc(as('ca1'), ...P('c1', 'examSubjects', 'es8')), { examId: 'e2', subjectId: 'sub9', maxMarks: 50 }));
+    await assertFails(updateDoc(doc(as('ca1'), ...P('c1', 'examSubjects', 'es2')), { maxMarks: 10 }));
+  });
+
+  it('class sessions: only the assigned teacher, with the right id', async () => {
+    const session = { assignmentId: 'a1', sectionId: 'sec1', subjectId: 'sub1', facultyId: 'f1', date: '2026-10-31', period: 1, presentCount: 1 };
+    await assertSucceeds(setDoc(doc(as('fac1'), ...P('c1', 'classSessions', 'a1_2026-10-31_1')), session));
+    await assertFails(setDoc(doc(as('fac1'), ...P('c1', 'classSessions', 'wrong-id')), session));
+    await assertFails(setDoc(doc(as('fac2'), ...P('c1', 'classSessions', 'a1_2026-10-31_1')), { ...session, facultyId: 'f2' }));
+  });
+
+  it('faculty attendance: admins write with the right id and status; faculty cannot', async () => {
+    const rec = { facultyId: 'f1', date: '2026-10-31', status: 'PRESENT' };
+    await assertSucceeds(setDoc(doc(as('ca1'), ...P('c1', 'facultyAttendance', 'f1_2026-10-31')), rec));
+    await assertFails(setDoc(doc(as('ca1'), ...P('c1', 'facultyAttendance', 'oops')), rec));
+    await assertFails(setDoc(doc(as('ca1'), ...P('c1', 'facultyAttendance', 'f1_2026-10-30')), { ...rec, date: '2026-10-30', status: 'LATE' }));
+    await assertFails(setDoc(doc(as('fac1'), ...P('c1', 'facultyAttendance', 'f1_2026-10-31')), rec));
+  });
+
+  it('college settings: only the super admin, only the allowed fields', async () => {
+    await assertSucceeds(updateDoc(doc(as('sa1'), ...P('c1')), { name: 'Renamed', timezone: 'Asia/Kolkata', updatedAt: now() }));
+    await assertFails(updateDoc(doc(as('sa1'), ...P('c1')), { status: 'SUSPENDED' }));
+    await assertFails(updateDoc(doc(as('ca1'), ...P('c1')), { name: 'Nope' }));
+  });
+
+  it('a 60-student marks batch and a 450-result publish chunk fit the lookup limits', async () => {
+    const f = as('fac1');
+    const b = writeBatch(f);
+    for (let i = 0; i < 60; i++) {
+      b.set(doc(f, ...P('c1', 'studentMarks', `es1_t${i}`)), { ...marksDoc, sectionId: 'sec1', studentId: `t${i}` });
+    }
+    await assertSucceeds(b.commit());
+
+    const a = as('ca1');
+    const r = writeBatch(a);
+    for (let i = 0; i < 450; i++) r.set(doc(a, ...P('c1', 'results', `e1_t${i}`)), { examId: 'e1', studentId: `t${i}`, total: 1 });
+    await assertSucceeds(r.commit());
+  });
+});

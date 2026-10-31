@@ -44,6 +44,15 @@ export function computeResult(papers) {
   return { total, maxTotal, percentage, passed };
 }
 
+export function validTimeZone(timeZone) {
+  try {
+    new Intl.DateTimeFormat('en-CA', { timeZone });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // Calendar date (YYYY-MM-DD) in the college's time zone.
 export function todayIn(timeZone, now = new Date()) {
   return new Intl.DateTimeFormat('en-CA', { timeZone }).format(now);

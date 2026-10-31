@@ -3,6 +3,7 @@ import { collection, doc, getDocs, orderBy, query, serverTimestamp, writeBatch }
 import { db } from '../../lib/firebase';
 import { useCtx } from '../../app/AuthProvider';
 import { platformAudit } from '../../lib/audit';
+import { validTimeZone } from '../../lib/calc';
 import { createAuthUser, sendSetPasswordEmail, slug } from '../../lib/data';
 import { Alert, Badge, Button, Input, Modal, PageHeader, Table, useAction, useAsync, useForm } from '../../components/ui';
 
@@ -66,6 +67,7 @@ function CreateCollege({ onClose }) {
   const submit = (e) => {
     e.preventDefault();
     run(async () => {
+      if (!validTimeZone(values.timezone.trim())) throw new Error('That is not a valid time zone name (example: Asia/Kolkata).');
       const iid = slug(values.code);
       if (!iid) throw new Error('Enter a college code using letters or numbers.');
       const email = values.adminEmail.trim().toLowerCase();

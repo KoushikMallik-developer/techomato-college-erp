@@ -3,6 +3,7 @@ import { useCtx } from '../../app/AuthProvider';
 import { tdoc } from '../../lib/tenant';
 import { doc } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
+import { validTimeZone } from '../../lib/calc';
 import { Alert, Button, Input, PageHeader, useAction, useForm } from '../../components/ui';
 
 export default function Settings() {
@@ -14,11 +15,7 @@ export default function Settings() {
   const save = (e) => {
     e.preventDefault();
     run(async () => {
-      try {
-        Intl.DateTimeFormat('en-CA', { timeZone: values.timezone.trim() });
-      } catch {
-        throw new Error('That is not a valid time zone name (example: Asia/Kolkata).');
-      }
+      if (!validTimeZone(values.timezone.trim())) throw new Error('That is not a valid time zone name (example: Asia/Kolkata).');
       await updateDoc(doc(db, 'institutions', iid), { ...values, timezone: values.timezone.trim(), updatedAt: serverTimestamp() });
     }, 'Saved. Reload the page to see a new time zone take effect.');
   };

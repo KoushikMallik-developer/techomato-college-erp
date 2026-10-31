@@ -105,7 +105,7 @@ service cloud.firestore {
         allow read: if refCol in ['departments', 'courses', 'subjects', 'academicYears', 'semesters',
             'sections', 'timetableSlots', 'exams', 'examSubjects', 'announcements'] && tenantOk(iid);
         allow write: if refCol in ['departments', 'courses', 'subjects', 'academicYears', 'semesters',
-            'sections', 'exams', 'examSubjects', 'announcements'] && isAdmin(iid);
+            'sections', 'exams', 'announcements'] && isAdmin(iid);
       }
 
       match /students/{studentId} {
@@ -245,6 +245,12 @@ service cloud.firestore {
           && request.resource.data.status in ['PRESENT', 'ABSENT', 'LEAVE'];
       }
 
+      // Papers can change only while the exam is a draft.
+      match /examSubjects/{id} {
+        allow create, update: if isAdmin(iid)
+          && get(/databases/$(database)/documents/institutions/$(iid)/exams/$(request.resource.data.examId)).data.status == 'DRAFT';
+      }
+
       match /studentMarks/{id} {
         function examSubject() {
           return get(/databases/$(database)/documents/institutions/$(iid)/examSubjects/$(request.resource.data.examSubjectId)).data;
@@ -277,6 +283,9 @@ service cloud.firestore {
                .hasOnly(['marks', 'absent', 'updatedAt'])
           && exam().status == 'DRAFT'
           && validMarks();
+        // An admin can remove a stray or wrong record (the right teacher then re-enters it), while the exam is a draft.
+        allow delete: if isAdmin(iid)
+          && get(/databases/$(database)/documents/institutions/$(iid)/exams/$(resource.data.examId)).data.status == 'DRAFT';
         // students: no access
       }
 

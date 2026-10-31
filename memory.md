@@ -4,10 +4,11 @@ Notes on decisions and state, so a new session can continue without re-deriving 
 
 ## State
 - The app is built (React + Vite, `firestore.rules`, `worker/`, `scripts/`). It is a git repo with one local commit; nothing is pushed.
-- Verified: `npm test` (18 unit and Worker tests), `npm run test:rules` (34 Security Rules tests on the Firestore emulator, including a 60-student attendance batch), and `vite build`.
+- Verified: `npm test` (19 unit and Worker tests), `npm run test:rules` (40 Security Rules tests on the Firestore emulator, including a 60-student attendance batch), and `vite build`.
 - Not verified: the UI has never been opened in a browser against a real or emulated project, the Worker has not run on Cloudflare, and the quota numbers are estimates.
 - Rules fixes found while building: students must fetch results by ID (`{examId}_{studentId}`), because rules do not filter queries and a query touching a draft result is rejected whole.
-- The Firestore emulator port 8080 may be held by a leftover process; rules tests use `firebase.rules-test.json` (port 8181) to avoid it.
+- `firebase emulators:exec` leaves a Java process holding its port after a run (killing it was not permitted). The rules tests use `firebase.rules-test.json`; if the port is taken, change the number there (now 8383).
+- Backup pagination: documents written in one batch share `updatedAt`, so pages use the document as cursor and resume is inclusive (`startAt`). Not covered by an automated test.
 
 ## Decisions the user made
 - **Multi-tenant SaaS.** Many colleges share one Firebase project. Each college's data lives under `institutions/{institutionId}/…`. One email belongs to one college.

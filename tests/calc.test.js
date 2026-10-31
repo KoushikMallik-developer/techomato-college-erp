@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { attendanceBySubject, computeResult, enrollmentKey, percent, recordKey, roomKey, todayIn } from '../src/lib/calc';
+import { attendanceBySubject, computeResult, enrollmentKey, percent, recordKey, roomKey, todayIn, validTimeZone } from '../src/lib/calc';
 
 describe('attendance', () => {
   it('excludes leave from the percentage', () => {
@@ -51,5 +51,10 @@ describe('keys', () => {
     const lateUtc = new Date('2026-10-30T20:00:00Z'); // 01:30 on the 31st in India
     expect(todayIn('Asia/Kolkata', lateUtc)).toBe('2026-10-31');
     expect(todayIn('UTC', lateUtc)).toBe('2026-10-30');
+  });
+
+  it('rejects a time zone typo before it is saved', () => {
+    expect(validTimeZone('Asia/Kolkata')).toBe(true);
+    expect(validTimeZone('Asia/Calcutta1')).toBe(false);
   });
 });
