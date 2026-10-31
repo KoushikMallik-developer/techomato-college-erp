@@ -46,7 +46,19 @@ function Profile({ s, reload }) {
   const save = (e) => {
     e.preventDefault();
     run(async () => {
-      await updateDoc(tdoc(iid, 'students', s.id), { ...values, updatedAt: serverTimestamp() });
+      const name = values.name.trim();
+      const batch = writeBatch(db);
+      batch.update(tdoc(iid, 'students', s.id), { ...values, name, updatedAt: serverTimestamp() });
+      if (name !== s.name) {
+        // Class lists and the login keep their own copy of the name.
+        const enrollments = await list(query(tcol(iid, 'enrollments'), where('studentId', '==', s.id)));
+        enrollments.forEach((en) => batch.update(tdoc(iid, 'enrollments', en.id), { studentName: name, updatedAt: serverTimestamp() }));
+        if (s.uid) {
+          const auditId = audit(batch, { iid, uid }, 'STUDENT_RENAMED', 'students', s.id, { old: s.name, new: name });
+          batch.update(doc(db, 'users', s.uid), { displayName: name, updatedAt: serverTimestamp(), auditId });
+        }
+      }
+      await batch.commit();
       reload();
     }, 'Saved.');
   };
@@ -58,9 +70,14 @@ function Profile({ s, reload }) {
       const auditId = audit(batch, { iid, uid }, active ? 'STUDENT_REACTIVATED' : 'STUDENT_DEACTIVATED', 'students', s.id, {});
       batch.update(tdoc(iid, 'students', s.id), { status: active ? 'ACTIVE' : 'INACTIVE', updatedAt: serverTimestamp() });
       if (s.uid) batch.update(doc(db, 'users', s.uid), { active, updatedAt: serverTimestamp(), auditId });
+      if (!active) {
+        // Otherwise class registers and marks sheets keep listing them, and publishing waits for their marks.
+        const current = await list(query(tcol(iid, 'enrollments'), where('studentId', '==', s.id), where('status', '==', 'ACTIVE')));
+        current.forEach((en) => batch.update(tdoc(iid, 'enrollments', en.id), { status: 'WITHDRAWN', updatedAt: serverTimestamp() }));
+      }
       await batch.commit();
       reload();
-    }, active ? 'Student reactivated.' : 'Student deactivated. Their login is blocked.');
+    }, active ? 'Student reactivated. Enroll them again if they are back in a class.' : 'Student deactivated. Their login is blocked and their current enrollments are withdrawn.');
 
   return (
     <form className="card" onSubmit={save}>

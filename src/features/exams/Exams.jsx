@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { addDoc, getDoc, orderBy, query, serverTimestamp, setDoc, where, writeBatch } from 'firebase/firestore';
+import { addDoc, getCountFromServer, getDoc, orderBy, query, serverTimestamp, setDoc, where, writeBatch } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { useCtx } from '../../app/AuthProvider';
 import { ROLES, tcol, tdoc } from '../../lib/tenant';
@@ -83,17 +83,31 @@ function CreateExam({ onClose }) {
   );
 }
 
-async function loadExam(iid, exam) {
-  const [examSubjects, subjects, enrollments, marks, semester] = await Promise.all([
+// Opening the screen reads counts only. Loading every marks document (about 12,000 for 2000 students x 6 papers)
+// on each click would burn the shared daily read quota.
+async function loadSummary(iid, exam) {
+  const count = async (q) => (await getCountFromServer(q)).data().count;
+  const [examSubjects, subjects, semester, active, completed, entered] = await Promise.all([
     list(query(tcol(iid, 'examSubjects'), where('examId', '==', exam.id))),
     list(query(tcol(iid, 'subjects'), where('courseId', '==', exam.courseId))),
-    list(query(tcol(iid, 'enrollments'), where('semesterId', '==', exam.semesterId))),
-    list(query(tcol(iid, 'studentMarks'), where('examId', '==', exam.id))),
     getDoc(tdoc(iid, 'semesters', exam.semesterId)),
+    count(query(tcol(iid, 'enrollments'), where('semesterId', '==', exam.semesterId), where('status', '==', 'ACTIVE'))),
+    count(query(tcol(iid, 'enrollments'), where('semesterId', '==', exam.semesterId), where('status', '==', 'COMPLETED'))),
+    count(query(tcol(iid, 'studentMarks'), where('examId', '==', exam.id))),
   ]);
   // Only subjects of this exam's semester can be papers: nobody teaches the others here.
   const ofSemester = subjects.filter((s) => s.semesterNumber === semester.data()?.number);
-  return { examSubjects, subjects: ofSemester, enrollments: enrollments.filter((e) => e.status !== 'WITHDRAWN'), marks, S: byId(ofSemester) };
+  return { examSubjects, subjects: ofSemester, S: byId(ofSemester), students: active + completed, entered };
+}
+
+// The full read: every enrollment and every marks record. Only when the admin asks, and when publishing.
+async function loadExam(iid, exam) {
+  const [examSubjects, enrollments, marks] = await Promise.all([
+    list(query(tcol(iid, 'examSubjects'), where('examId', '==', exam.id))),
+    list(query(tcol(iid, 'enrollments'), where('semesterId', '==', exam.semesterId))),
+    list(query(tcol(iid, 'studentMarks'), where('examId', '==', exam.id))),
+  ]);
+  return { examSubjects, enrollments: enrollments.filter((e) => e.status !== 'WITHDRAWN'), marks };
 }
 
 // Every enrolled student needs a marks record (or an absent mark) for every paper before publishing.
@@ -115,7 +129,8 @@ function checkExam(data) {
 function ExamManager({ exam, onChange }) {
   const { iid, uid } = useCtx();
   const draft = exam.status === 'DRAFT';
-  const { data, loading, error, reload } = useAsync(() => loadExam(iid, exam), [exam.id, exam.status]);
+  const { data, loading, error, reload } = useAsync(() => loadSummary(iid, exam), [exam.id, exam.status]);
+  const [details, setDetails] = useState(null); // the full check, only after the admin asks for it
   const { values, bind } = useForm({ subjectId: '', maxMarks: '', passMarks: '' });
   const action = useAction();
 
@@ -131,12 +146,16 @@ function ExamManager({ exam, onChange }) {
         examId: exam.id, subjectId: s.id, subjectName: s.name, maxMarks: Number(values.maxMarks || s.maxMarks),
         passMarks: Number(values.passMarks || s.passMarks), createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
       });
+      setDetails(null);
       reload();
     });
   };
 
-  const { gaps, wrongSection } = checkExam(data);
-  const resultCount = data.enrollments.length;
+  const { gaps, wrongSection } = details ? checkExam(details) : { gaps: [], wrongSection: [] };
+  const resultCount = data.students;
+  const expected = data.students * data.examSubjects.length;
+
+  const checkMarks = () => action.run(async () => setDetails(await loadExam(iid, exam)));
 
   const removePaper = (es) =>
     action.run(async () => {
@@ -156,6 +175,7 @@ function ExamManager({ exam, onChange }) {
       // The log entry rides in the first batch, so anything that gets deleted is also logged.
       audit(batches[0], { iid, uid }, 'PAPER_REMOVED', 'examSubjects', es.id, { subject: es.subjectName, marksDeleted: marks.length });
       for (const b of batches) await b.commit();
+      setDetails(null);
       reload();
     });
 
@@ -165,8 +185,8 @@ function ExamManager({ exam, onChange }) {
       const fresh = await loadExam(iid, exam);
       const check = checkExam(fresh);
       if (check.gaps.length || check.wrongSection.length) {
-        reload();
-        throw new Error('Marks changed since this screen loaded. Review the list below and try again.');
+        setDetails(fresh);
+        throw new Error(`${check.gaps.length} marks are missing and ${check.wrongSection.length} are in the wrong section. See the list below.`);
       }
       const marksById = check.marksById;
       const results = fresh.enrollments.map((en) => {
@@ -200,6 +220,7 @@ function ExamManager({ exam, onChange }) {
       audit(batch, { iid, uid }, 'MARKS_RECORD_REMOVED', 'studentMarks', w.id, { student: w.student, paper: w.paper });
       batch.delete(tdoc(iid, 'studentMarks', w.id));
       await batch.commit();
+      setDetails(await loadExam(iid, exam));
       reload();
     });
 
@@ -231,9 +252,7 @@ function ExamManager({ exam, onChange }) {
         rows={data.examSubjects}
         empty="No papers yet."
         columns={[{ key: 'subjectName', label: 'Subject' }, { key: 'maxMarks', label: 'Max marks' }, { key: 'passMarks', label: 'Pass marks' }]}
-        actions={draft ? (es) => <Button small variant="danger" disabled={action.busy} onClick={() => removePaper(es)}>
-          {data.marks.some((m) => m.examSubjectId === es.id) ? 'Remove paper and its marks' : 'Remove paper'}
-        </Button> : undefined}
+        actions={draft ? (es) => <Button small variant="danger" disabled={action.busy} onClick={() => removePaper(es)}>Remove paper and its marks</Button> : undefined}
       />
       {draft && (
         <form className="row" onSubmit={addSubject} style={{ margin: '12px 0' }}>
@@ -246,6 +265,10 @@ function ExamManager({ exam, onChange }) {
       <h3>Publishing</h3>
       {draft ? (
         <>
+          <p>
+            {data.students} students × {data.examSubjects.length} papers: <strong>{data.entered}</strong> of {expected} marks entered.{' '}
+            <Button small onClick={checkMarks} disabled={action.busy || !expected}>Check for missing marks</Button>
+          </p>
           {gaps.length > 0 && (
             <Alert kind="error">
               {gaps.length} marks are missing. Faculty must enter a mark (or mark the student absent) before publishing.
@@ -269,7 +292,7 @@ function ExamManager({ exam, onChange }) {
           )}
           <p className="muted">Publishing writes {resultCount} result records, against the shared daily free quota. Avoid doing it on a heavy marks-entry day.</p>
           <Button variant="primary" onClick={publish}
-            disabled={action.busy || gaps.length > 0 || wrongSection.length > 0 || !data.examSubjects.length || !resultCount}>
+            disabled={action.busy || gaps.length > 0 || wrongSection.length > 0 || !data.examSubjects.length || !resultCount || data.entered < expected}>
             {action.busy ? 'Publishing…' : 'Publish results'}
           </Button>
         </>

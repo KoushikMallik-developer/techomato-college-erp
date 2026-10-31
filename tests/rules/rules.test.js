@@ -470,4 +470,40 @@ describe('admin clean-up, locks after publish, and the rest of the rules', () =>
     await assertFails(move([1, 2]));
     await assertSucceeds(move([1]));
   });
+
+  it('a faculty rename can update names on slots (a few at a time), assignments, and the login', async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      for (let i = 1; i <= 5; i++) {
+        await setDoc(doc(db, ...P('c1', 'timetableSlots', `n${i}`)), { sectionId: 'sec1', facultyId: 'f1', dayOfWeek: i, period: 1, room: 'R', roomKey: 'r' });
+        for (const k of [`room_r_${i}_1`, `faculty_f1_${i}_1`, `section_sec1_${i}_1`]) await setDoc(doc(db, ...P('c1', 'timetableLocks', k)), { slotId: `n${i}` });
+      }
+    });
+    const db = as('ca1');
+    const slots = writeBatch(db);
+    for (let i = 1; i <= 5; i++) slots.update(doc(db, ...P('c1', 'timetableSlots', `n${i}`)), { facultyName: 'New Name', updatedAt: now() });
+    await assertSucceeds(slots.commit());
+
+    const rest = writeBatch(db);
+    rest.set(doc(db, ...P('c1', 'auditLogs', 'ren1')), { actorUid: 'ca1', timestamp: now() });
+    rest.update(doc(db, ...P('c1', 'teachingAssignments', 'a1')), { facultyName: 'New Name' });
+    rest.update(doc(db, 'users', 'fac1'), { displayName: 'New Name', auditId: 'ren1' });
+    await assertSucceeds(rest.commit());
+  });
+
+  it('a student rename updates enrollments and the login; deactivation withdraws enrollments', async () => {
+    const db = as('ca1');
+    const b = writeBatch(db);
+    b.set(doc(db, ...P('c1', 'auditLogs', 'ren2')), { actorUid: 'ca1', timestamp: now() });
+    b.update(doc(db, ...P('c1', 'enrollments', 's1_sem1')), { studentName: 'New', status: 'WITHDRAWN' });
+    b.update(doc(db, 'users', 'stu1'), { displayName: 'New', auditId: 'ren2' });
+    await assertSucceeds(b.commit());
+  });
+
+  it('only admin accounts are listed on the Users page', async () => {
+    const db = as('sa1');
+    const q = (r) => getDocs(query(collection(db, 'users'), where('institutionId', '==', 'c1'), where('role', '==', r)));
+    await assertSucceeds(q('COLLEGE_ADMIN'));
+    await assertSucceeds(q('SUPER_ADMIN'));
+  });
 });

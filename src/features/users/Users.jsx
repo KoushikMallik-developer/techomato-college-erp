@@ -23,7 +23,9 @@ function UserList() {
   const { iid, uid, role } = useCtx();
   const [creating, setCreating] = useState(false);
   const { data, loading, error, reload } = useAsync(
-    () => list(query(collection(db, 'users'), where('institutionId', '==', iid))),
+    // Admin accounts only: the college's students and faculty are thousands of rows with nothing to do here.
+    async () => (await Promise.all(['SUPER_ADMIN', 'COLLEGE_ADMIN'].map((r) =>
+      list(query(collection(db, 'users'), where('institutionId', '==', iid), where('role', '==', r)))))).flat(),
     [iid],
   );
   const action = useAction();
@@ -46,7 +48,7 @@ function UserList() {
       <div className="row" style={{ marginBottom: 12 }}>
         {isSuper && <Button variant="primary" onClick={() => setCreating(true)}>Add College Admin</Button>}
       </div>
-      <Alert kind="info">Faculty and student logins are created and deactivated from their own profile pages.</Alert>
+      <Alert kind="info">This list shows admin accounts. Faculty and student logins are created and deactivated from their own profile pages.</Alert>
       <Alert kind="error">{error?.message || action.error}</Alert>
       {loading ? <Loading /> : (
         <Table

@@ -5,7 +5,7 @@ import { db } from '../../lib/firebase';
 import { useCtx } from '../../app/AuthProvider';
 import { tcol, tdoc } from '../../lib/tenant';
 import { audit } from '../../lib/audit';
-import { list } from '../../lib/data';
+import { chunk, list } from '../../lib/data';
 import FilePanel from '../../components/FilePanel';
 import { Alert, Badge, Button, Input, Loading, PageHeader, Table, Tabs, useAction, useAsync, useForm } from '../../components/ui';
 
@@ -44,7 +44,30 @@ function Profile({ f, reload }) {
   const save = (e) => {
     e.preventDefault();
     run(async () => {
-      await updateDoc(tdoc(iid, 'faculty', f.id), { ...values, updatedAt: serverTimestamp() });
+      const name = values.name.trim();
+      if (name !== f.name) {
+        const [assignments, slots] = await Promise.all([
+          list(query(tcol(iid, 'teachingAssignments'), where('facultyId', '==', f.id))),
+          list(query(tcol(iid, 'timetableSlots'), where('facultyId', '==', f.id))),
+        ]);
+        // A slot write costs 3 rule lookups and one batch allows about 20, so a few at a time. Slots go first: if one
+        // fails, the profile is unchanged and saving again repeats the same updates.
+        for (const part of chunk(slots, 5)) {
+          const b = writeBatch(db);
+          part.forEach((sl) => b.update(tdoc(iid, 'timetableSlots', sl.id), { facultyName: name, updatedAt: serverTimestamp() }));
+          await b.commit();
+        }
+        const batch = writeBatch(db);
+        batch.update(tdoc(iid, 'faculty', f.id), { ...values, name, updatedAt: serverTimestamp() });
+        assignments.forEach((a) => batch.update(tdoc(iid, 'teachingAssignments', a.id), { facultyName: name, updatedAt: serverTimestamp() }));
+        if (f.uid) {
+          const auditId = audit(batch, { iid, uid }, 'FACULTY_RENAMED', 'faculty', f.id, { old: f.name, new: name });
+          batch.update(doc(db, 'users', f.uid), { displayName: name, updatedAt: serverTimestamp(), auditId });
+        }
+        await batch.commit();
+      } else {
+        await updateDoc(tdoc(iid, 'faculty', f.id), { ...values, updatedAt: serverTimestamp() });
+      }
       reload();
     }, 'Saved.');
   };
