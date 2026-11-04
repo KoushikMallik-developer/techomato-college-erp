@@ -15,6 +15,7 @@ const users = {
   ca1: { role: 'COLLEGE_ADMIN', institutionId: 'c1' },
   fac1: { role: 'FACULTY', institutionId: 'c1', facultyId: 'f1' },
   fac2: { role: 'FACULTY', institutionId: 'c1', facultyId: 'f2' },
+  lib1: { role: 'LIBRARIAN', institutionId: 'c1', libraryId: 'main' },
   stu1: { role: 'STUDENT', institutionId: 'c1', studentId: 's1' },
   stu2: { role: 'STUDENT', institutionId: 'c1', studentId: 's2' },
   ca2: { role: 'COLLEGE_ADMIN', institutionId: 'c2' },
@@ -28,6 +29,8 @@ async function seed() {
     for (const [uid, u] of Object.entries(users)) await put(['users', uid], { ...u, active: true, displayName: uid });
     await put(P('c1'), { name: 'One', status: 'ACTIVE', timezone: 'UTC' });
     await put(P('c2'), { name: 'Two', status: 'ACTIVE', timezone: 'UTC' });
+    await put(P('c1', 'faculty', 'f1'), { name: 'F1', status: 'ACTIVE' });
+    await put(P('c1', 'libraries', 'main'), { name: 'Main library', librarianEmail: 'lib@x.test', librarianUid: 'lib1', status: 'ACTIVE' });
     await put(P('c1', 'students', 's1'), { name: 'S1', enrollmentNumber: 'A1', enrollmentKey: 'A1', status: 'ACTIVE' });
     await put(P('c1', 'students', 's2'), { name: 'S2', enrollmentNumber: 'A2', enrollmentKey: 'A2', status: 'ACTIVE' });
     await put(P('c1', 'enrollmentNumberIndex', 'A1'), { studentId: 's1' });
@@ -600,5 +603,347 @@ describe('admin clean-up, locks after publish, and the rest of the rules', () =>
       await assertFails(getDoc(doc(as('fac2'), ...P(...path, 'content', 'data'))));
       await assertFails(getDoc(doc(as('stu2'), ...P(...path, 'content', 'data')))); // enrolled in another section, withdrawn
     });
+  });
+});
+
+// ---------------- student requests, calendar, read state ----------------
+const seedDoc = (path, data) => env.withSecurityRulesDisabled((ctx) => setDoc(doc(ctx.firestore(), ...path), data));
+const leave = (extra = {}) => ({
+  kind: 'LEAVE', studentId: 's1', studentName: 'S1', subject: 'Fever', message: 'Unwell, back on Monday',
+  fromDate: '2026-11-02', toDate: '2026-11-03', status: 'PENDING', createdAt: now(), updatedAt: now(), ...extra,
+});
+const old = () => ({ createdAt: new Date(), updatedAt: new Date() });
+
+describe('student requests', () => {
+  it('a student files a request for themselves only, as PENDING, with their own name', async () => {
+    const db = as('stu1');
+    await assertSucceeds(setDoc(doc(db, ...P('c1', 'requests', 'r1')), leave()));
+    await assertFails(setDoc(doc(db, ...P('c1', 'requests', 'r2')), leave({ studentId: 's2', studentName: 'S2' })));
+    await assertFails(setDoc(doc(db, ...P('c1', 'requests', 'r3')), leave({ studentName: 'Somebody else' })));
+    await assertFails(setDoc(doc(db, ...P('c1', 'requests', 'r4')), leave({ status: 'APPROVED' })));
+    await assertFails(setDoc(doc(db, ...P('c1', 'requests', 'r5')), leave({ extra: 'x' })));
+    await assertFails(setDoc(doc(db, ...P('c1', 'requests', 'r6')), leave({ fromDate: '2026-11-05', toDate: '2026-11-02' })));
+    await assertFails(setDoc(doc(as('fac1'), ...P('c1', 'requests', 'r7')), leave()));
+  });
+
+  it('only the student and admins can read it', async () => {
+    await seedDoc(P('c1', 'requests', 'r1'), leave(old()));
+    await assertSucceeds(getDoc(doc(as('stu1'), ...P('c1', 'requests', 'r1'))));
+    await assertSucceeds(getDoc(doc(as('ca1'), ...P('c1', 'requests', 'r1'))));
+    await assertFails(getDoc(doc(as('stu2'), ...P('c1', 'requests', 'r1'))));
+    await assertFails(getDoc(doc(as('fac1'), ...P('c1', 'requests', 'r1'))));
+  });
+
+  it('the student can cancel a pending request but cannot approve it', async () => {
+    await seedDoc(P('c1', 'requests', 'r1'), leave(old()));
+    const ref = doc(as('stu1'), ...P('c1', 'requests', 'r1'));
+    await assertFails(updateDoc(ref, { status: 'APPROVED', updatedAt: now() }));
+    await assertSucceeds(updateDoc(ref, { status: 'CANCELLED', updatedAt: now() }));
+  });
+
+  it('an admin decides a leave request once, and a grievance can only be resolved', async () => {
+    await seedDoc(P('c1', 'requests', 'r1'), leave(old()));
+    await seedDoc(P('c1', 'requests', 'g1'), { ...leave({ kind: 'GRIEVANCE', ...old() }), fromDate: null, toDate: null });
+    const db = as('ca1');
+    const decide = (status) => ({ status, response: 'ok', decidedBy: 'ca1', decidedAt: now(), updatedAt: now() });
+    await assertFails(updateDoc(doc(db, ...P('c1', 'requests', 'r1')), decide('RESOLVED')));
+    await assertSucceeds(updateDoc(doc(db, ...P('c1', 'requests', 'r1')), decide('APPROVED')));
+    await assertFails(updateDoc(doc(db, ...P('c1', 'requests', 'r1')), decide('REJECTED'))); // already decided
+    await assertFails(updateDoc(doc(db, ...P('c1', 'requests', 'g1')), decide('APPROVED')));
+    await assertSucceeds(updateDoc(doc(db, ...P('c1', 'requests', 'g1')), decide('RESOLVED')));
+    await assertFails(updateDoc(doc(as('fac1'), ...P('c1', 'requests', 'r1')), decide('APPROVED')));
+  });
+});
+
+describe('promote a class', () => {
+  it('100 students move in one batch: 100 completed, 100 new enrollments and an audit entry', async () => {
+    const ids = Array.from({ length: 100 }, (_, i) => `p${i}`);
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      for (const sid of ids) {
+        await setDoc(doc(ctx.firestore(), ...P('c1', 'enrollments', `${sid}_sem1`)), { studentId: sid, studentName: sid, semesterId: 'sem1', sectionId: 'sec1', status: 'ACTIVE' });
+      }
+    });
+    const db = as('ca1');
+    const b = writeBatch(db);
+    b.set(doc(db, ...P('c1', 'auditLogs', 'promo')), { actorUid: 'ca1', action: 'CLASS_PROMOTED', entityType: 'sections', entityId: 'sec1', metadata: {}, timestamp: now(), updatedAt: now() });
+    for (const sid of ids) {
+      b.update(doc(db, ...P('c1', 'enrollments', `${sid}_sem1`)), { status: 'COMPLETED', updatedAt: now() });
+      b.set(doc(db, ...P('c1', 'enrollments', `${sid}_sem2`)), { studentId: sid, studentName: sid, semesterId: 'sem2', sectionId: 'sec3', status: 'ACTIVE', enrolledAt: now(), updatedAt: now() });
+    }
+    await assertSucceeds(b.commit());
+  });
+});
+
+describe('faculty requests and leave rules', () => {
+  const fleave = (extra = {}) => ({
+    kind: 'LEAVE', facultyId: 'f1', facultyName: 'F1', subject: 'Conference', message: 'Presenting a paper',
+    fromDate: '2026-11-02', toDate: '2026-11-03', status: 'PENDING', createdAt: now(), updatedAt: now(), ...extra,
+  });
+  const decide = (status, response = 'ok') => ({ status, response, decidedBy: 'ca1', decidedAt: now(), updatedAt: now() });
+
+  it('faculty file and read their own requests only', async () => {
+    const db = as('fac1');
+    await assertSucceeds(setDoc(doc(db, ...P('c1', 'requests', 'f1r')), fleave()));
+    await assertFails(setDoc(doc(db, ...P('c1', 'requests', 'f2r')), fleave({ facultyId: 'f2' })));
+    await assertFails(setDoc(doc(db, ...P('c1', 'requests', 'f3r')), fleave({ facultyName: 'Someone' })));
+    await assertFails(setDoc(doc(db, ...P('c1', 'requests', 'f4r')), fleave({ status: 'APPROVED' })));
+    await assertSucceeds(getDoc(doc(db, ...P('c1', 'requests', 'f1r'))));
+    await assertFails(getDoc(doc(as('stu1'), ...P('c1', 'requests', 'f1r'))));
+    await assertSucceeds(updateDoc(doc(db, ...P('c1', 'requests', 'f1r')), { status: 'CANCELLED', updatedAt: now() }));
+  });
+
+  it('a request message needs at least 10 characters', async () => {
+    await assertFails(setDoc(doc(as('stu1'), ...P('c1', 'requests', 'short')), leave({ message: 'sick' })));
+  });
+
+  it('a rejection needs a reason, and an approved leave can be revoked only with one', async () => {
+    await seedDoc(P('c1', 'requests', 'r1'), leave(old()));
+    const ref = doc(as('ca1'), ...P('c1', 'requests', 'r1'));
+    await assertFails(updateDoc(ref, decide('REJECTED', '')));
+    await assertSucceeds(updateDoc(ref, decide('APPROVED', '')));
+    await assertFails(updateDoc(ref, decide('REVOKED', '')));
+    await assertSucceeds(updateDoc(ref, decide('REVOKED', 'Dates clash with exams')));
+    await assertFails(updateDoc(ref, decide('APPROVED'))); // a revoked request stays revoked
+  });
+});
+
+describe('library', () => {
+  const book = (extra = {}) => ({ libraryId: 'main', title: 'Algorithms', author: 'CLRS', isbn: '0262033844', category: 'CS', status: 'ACTIVE', copies: 0, available: 0, createdAt: now(), updatedAt: now(), ...extra });
+  const loan = (extra = {}) => ({
+    libraryId: 'main', copyId: 'C1', bookId: 'b1', bookTitle: 'Algorithms', studentId: 's1', studentName: 'S1', issuedAt: now(), dueDate: '2026-11-18',
+    issuedBy: 'ca1', status: 'ACTIVE', createdAt: now(), updatedAt: now(), ...extra,
+  });
+  const stocked = async () => {
+    await seedDoc(P('c1', 'books', 'b1'), { ...book(), copies: 1, available: 1, ...old() });
+    await seedDoc(P('c1', 'bookCopies', 'C1'), { libraryId: 'main', bookId: 'b1', status: 'AVAILABLE', ...old() });
+  };
+  const issueBatch = (db, id = 'l1', copy = 'C1') => {
+    const b = writeBatch(db);
+    b.set(doc(db, ...P('c1', 'loans', id)), loan({ copyId: copy }));
+    b.update(doc(db, ...P('c1', 'bookCopies', copy)), { status: 'ON_LOAN', loanId: id, updatedAt: now() });
+    return b.commit();
+  };
+
+  it('a book edit keeps sizes and status in range', async () => {
+    await stocked();
+    const ref = doc(as('ca1'), ...P('c1', 'books', 'b1'));
+    await assertSucceeds(updateDoc(ref, { title: 'Algorithms 4e', status: 'ARCHIVED', updatedAt: now() }));
+    await assertFails(updateDoc(ref, { title: 'x'.repeat(201), updatedAt: now() }));
+    await assertFails(updateDoc(ref, { title: '', updatedAt: now() }));
+    await assertFails(updateDoc(ref, { status: 'GONE', updatedAt: now() }));
+  });
+
+  it('admins add books and copies; students cannot; everyone in the college reads books', async () => {
+    await assertSucceeds(setDoc(doc(as('ca1'), ...P('c1', 'books', 'b1')), book()));
+    await assertFails(setDoc(doc(as('ca1'), ...P('c1', 'books', 'b2')), book({ copies: 5 })));
+    await assertFails(setDoc(doc(as('stu1'), ...P('c1', 'books', 'b3')), book()));
+    await assertSucceeds(getDoc(doc(as('stu1'), ...P('c1', 'books', 'b1'))));
+    await assertSucceeds(setDoc(doc(as('ca1'), ...P('c1', 'bookCopies', 'C9')), { libraryId: 'main', bookId: 'b1', status: 'AVAILABLE', createdAt: now(), updatedAt: now() }));
+    await assertFails(setDoc(doc(as('ca1'), ...P('c1', 'bookCopies', 'C8')), { libraryId: 'main', bookId: 'nope', status: 'AVAILABLE', createdAt: now(), updatedAt: now() }));
+    await assertFails(getDoc(doc(as('stu1'), ...P('c1', 'bookCopies', 'C9')))); // copies are admin-only
+  });
+
+  it('a copy is issued with a new loan, and a second issue of the same copy fails', async () => {
+    await stocked();
+    const adm = as('ca1');
+    await assertSucceeds(issueBatch(adm));
+    await assertFails(issueBatch(adm, 'l2')); // the copy is already ON_LOAN
+    await assertFails(updateDoc(doc(as('ca1'), ...P('c1', 'bookCopies', 'C1')), { status: 'ON_LOAN', loanId: 'l3', updatedAt: now() })); // no loan to go with it
+  });
+
+  it('cannot issue without a loan, to an unknown name, or as a student', async () => {
+    await stocked();
+    await assertFails(updateDoc(doc(as('ca1'), ...P('c1', 'bookCopies', 'C1')), { status: 'ON_LOAN', loanId: 'ghost', updatedAt: now() }));
+    const adm = as('ca1');
+    const b = writeBatch(adm);
+    b.set(doc(adm, ...P('c1', 'loans', 'l9')), loan({ studentName: 'Someone else' }));
+    b.update(doc(adm, ...P('c1', 'bookCopies', 'C1')), { status: 'ON_LOAN', loanId: 'l9', updatedAt: now() });
+    await assertFails(b.commit());
+    await assertFails(setDoc(doc(as('stu1'), ...P('c1', 'loans', 'l8')), loan()));
+  });
+
+  it('a return closes the loan and frees the copy together, once', async () => {
+    await stocked();
+    await assertSucceeds(issueBatch(as('ca1')));
+    const adm = as('ca1');
+    const ret = () => {
+      const b = writeBatch(adm);
+      b.update(doc(adm, ...P('c1', 'loans', 'l1')), { status: 'RETURNED', returnedAt: now(), returnedBy: 'ca1', updatedAt: now() });
+      b.update(doc(adm, ...P('c1', 'bookCopies', 'C1')), { status: 'AVAILABLE', updatedAt: now() });
+      return b.commit();
+    };
+    await assertFails(updateDoc(doc(as('ca1'), ...P('c1', 'bookCopies', 'C1')), { status: 'AVAILABLE', updatedAt: now() })); // copy alone, loan still open
+    await assertSucceeds(ret());
+    await assertFails(ret()); // already returned
+  });
+
+  it('the librarian runs the library: adds books, issues and returns; looks up one student but cannot list students', async () => {
+    const lib = as('lib1');
+    await assertSucceeds(setDoc(doc(lib, ...P('c1', 'books', 'b1')), book()));
+    await seedDoc(P('c1', 'bookCopies', 'C1'), { libraryId: 'main', bookId: 'b1', status: 'AVAILABLE', ...old() });
+    const issue = writeBatch(lib);
+    issue.set(doc(lib, ...P('c1', 'loans', 'l1')), loan({ issuedBy: 'lib1' }));
+    issue.update(doc(lib, ...P('c1', 'bookCopies', 'C1')), { status: 'ON_LOAN', loanId: 'l1', updatedAt: now() });
+    await assertSucceeds(issue.commit());
+    await assertSucceeds(getDoc(doc(lib, ...P('c1', 'enrollmentNumberIndex', 'A1'))));
+    await assertSucceeds(getDoc(doc(lib, ...P('c1', 'students', 's1'))));
+    await assertFails(getDocs(collection(lib, ...P('c1', 'students'))));
+    await seedDoc(P('c1', 'requests', 'r1'), leave(old()));
+    await assertFails(getDoc(doc(lib, ...P('c1', 'requests', 'r1')))); // nothing outside the library
+    await assertFails(setDoc(doc(lib, ...P('c1', 'announcements', 'a9')), { title: 'x' }));
+  });
+
+  it('with no library created, nobody can add books or issue; faculty and students never can', async () => {
+    await env.withSecurityRulesDisabled((ctx) => deleteDoc(doc(ctx.firestore(), ...P('c1', 'libraries', 'main'))));
+    await assertFails(setDoc(doc(as('ca1'), ...P('c1', 'books', 'b1')), book()));
+    await assertFails(setDoc(doc(as('lib1'), ...P('c1', 'books', 'b2')), book()));
+    await env.withSecurityRulesDisabled((ctx) => setDoc(doc(ctx.firestore(), ...P('c1', 'libraries', 'main')), { name: 'L', librarianEmail: 'a@b.c', librarianUid: 'lib1', status: 'ACTIVE' }));
+    await assertFails(setDoc(doc(as('fac1'), ...P('c1', 'books', 'b3')), book()));
+  });
+
+  const libDoc = (uid, extra = {}) => ({ name: 'Central', librarianEmail: `${uid}@x.test`, librarianUid: uid, status: 'ACTIVE', createdAt: now(), updatedAt: now(), ...extra });
+  const librarianDoc = (libraryId, auditId, extra = {}) => ({
+    institutionId: 'c1', role: 'LIBRARIAN', libraryId, displayName: 'x', email: 'x@x.test', active: true, auditId, createdAt: now(), updatedAt: now(), ...extra,
+  });
+  const auditDoc = () => ({ actorUid: 'ca1', action: 'X', entityType: 'libraries', entityId: 'x', metadata: {}, timestamp: now(), updatedAt: now() });
+
+  it('an admin creates libraries (several allowed) with the librarian login in the same batch; nobody else can', async () => {
+    const make = (db, id, uid, userExtra = {}) => {
+      const b = writeBatch(db);
+      b.set(doc(db, ...P('c1', 'auditLogs', `au-${id}`)), auditDoc());
+      b.set(doc(db, ...P('c1', 'libraries', id)), libDoc(uid));
+      b.set(doc(db, 'users', uid), librarianDoc(id, `au-${id}`, userExtra));
+      return b.commit();
+    };
+    await assertFails(make(as('stu1'), 'second', 'lib9'));
+    await assertFails(make(as('ca1'), 'second', 'lib9', { role: 'SUPER_ADMIN' })); // the login must be a LIBRARIAN
+    await assertFails(make(as('ca1'), 'second', 'lib9', { libraryId: 'main' })); // and belong to this library
+    await assertSucceeds(make(as('ca1'), 'second', 'lib9')); // 'main' already exists: this is a second library
+    await assertSucceeds(getDoc(doc(as('stu1'), ...P('c1', 'libraries', 'second'))));
+  });
+
+  it('a librarian works only in their own library', async () => {
+    await seedDoc(P('c1', 'libraries', 'second'), { ...libDoc('lib9'), ...old() });
+    await assertSucceeds(setDoc(doc(as('lib1'), ...P('c1', 'books', 'b1')), book()));
+    await assertFails(setDoc(doc(as('lib1'), ...P('c1', 'books', 'b2')), book({ libraryId: 'second' })));
+    await assertSucceeds(setDoc(doc(as('ca1'), ...P('c1', 'books', 'b3')), book({ libraryId: 'second' }))); // admins work in any
+    await seedDoc(P('c1', 'loans', 'l1'), loan(old()));
+    await assertSucceeds(getDocs(query(collection(as('lib1'), ...P('c1', 'loans')), where('libraryId', '==', 'main'), where('status', '==', 'ACTIVE'))));
+    await assertFails(getDocs(query(collection(as('lib1'), ...P('c1', 'loans')), where('libraryId', '==', 'second'))));
+  });
+
+  it('turning a library off freezes it for everyone but keeps the data; turning it on restores it', async () => {
+    const lib = doc(as('ca1'), ...P('c1', 'libraries', 'main'));
+    await assertFails(updateDoc(doc(as('lib1'), ...P('c1', 'libraries', 'main')), { status: 'OFF', updatedAt: now() }));
+    await assertFails(updateDoc(lib, { status: 'BROKEN', updatedAt: now() }));
+    await assertSucceeds(updateDoc(lib, { status: 'OFF', updatedAt: now() }));
+    await assertFails(setDoc(doc(as('ca1'), ...P('c1', 'books', 'b1')), book()));
+    await assertFails(setDoc(doc(as('lib1'), ...P('c1', 'books', 'b2')), book()));
+    await assertSucceeds(updateDoc(lib, { status: 'ACTIVE', updatedAt: now() }));
+    await assertSucceeds(setDoc(doc(as('lib1'), ...P('c1', 'books', 'b3')), book()));
+  });
+
+  it('replacing the librarian needs the new login and the old one blocked in the same batch', async () => {
+    const swap = (block) => {
+      const db = as('ca1');
+      const b = writeBatch(db);
+      b.set(doc(db, ...P('c1', 'auditLogs', 'au-r')), auditDoc());
+      b.set(doc(db, 'users', 'lib2'), librarianDoc('main', 'au-r', { email: 'lib2@x.test' }));
+      if (block) b.update(doc(db, 'users', 'lib1'), { active: false, auditId: 'au-r', updatedAt: now() });
+      b.update(doc(db, ...P('c1', 'libraries', 'main')), { librarianEmail: 'lib2@x.test', librarianUid: 'lib2', updatedAt: now() });
+      return b.commit();
+    };
+    await assertFails(swap(false)); // the old librarian would still be able to sign in
+    await assertSucceeds(swap(true));
+    await assertFails(getDocs(query(collection(as('lib1'), ...P('c1', 'loans')), where('libraryId', '==', 'main')))); // blocked login
+  });
+
+  it('a student reads only their own loans', async () => {
+    await seedDoc(P('c1', 'loans', 'l1'), loan(old()));
+    await assertSucceeds(getDoc(doc(as('stu1'), ...P('c1', 'loans', 'l1'))));
+    await assertFails(getDoc(doc(as('stu2'), ...P('c1', 'loans', 'l1'))));
+    await assertFails(getDoc(doc(as('fac1'), ...P('c1', 'loans', 'l1'))));
+  });
+});
+
+describe('calendar, events and read state', () => {
+  const ev = (extra = {}) => ({ title: 'Sports day', type: 'EVENT', startDate: '2026-12-01', endDate: '2026-12-01', rsvp: true, ...extra });
+
+  it('admins write events; everyone in the college reads them; other colleges cannot', async () => {
+    await assertSucceeds(setDoc(doc(as('ca1'), ...P('c1', 'calendarEvents', 'e1')), ev()));
+    await assertFails(setDoc(doc(as('ca1'), ...P('c1', 'calendarEvents', 'e2')), ev({ type: 'PARTY' })));
+    await assertFails(setDoc(doc(as('ca1'), ...P('c1', 'calendarEvents', 'e3')), ev({ endDate: '2026-11-01' })));
+    await assertFails(setDoc(doc(as('stu1'), ...P('c1', 'calendarEvents', 'e4')), ev()));
+    await assertFails(setDoc(doc(as('fac1'), ...P('c1', 'calendarEvents', 'e5')), ev()));
+    await assertSucceeds(getDoc(doc(as('stu1'), ...P('c1', 'calendarEvents', 'e1'))));
+    await assertFails(getDoc(doc(as('ca2'), ...P('c1', 'calendarEvents', 'e1'))));
+  });
+
+  it('a user signs up as themselves, only where sign-up is on, and can leave again', async () => {
+    await seedDoc(P('c1', 'calendarEvents', 'open'), ev());
+    await seedDoc(P('c1', 'calendarEvents', 'closed'), ev({ rsvp: false }));
+    const mine = (event, uid = 'stu1') => doc(as('stu1'), ...P('c1', 'calendarEvents', event, 'rsvps', uid));
+    await assertSucceeds(setDoc(mine('open'), { name: 'S1', createdAt: now() }));
+    await assertFails(setDoc(mine('closed'), { name: 'S1', createdAt: now() }));
+    await assertFails(setDoc(mine('open', 'stu2'), { name: 'S2', createdAt: now() }));
+    await assertFails(setDoc(mine('open'), { name: 'x'.repeat(101), createdAt: now() }));
+    await assertFails(setDoc(mine('open'), { name: { a: 1 }, createdAt: now() }));
+    await assertSucceeds(getDoc(mine('open')));
+    await assertSucceeds(deleteDoc(mine('open')));
+  });
+
+  it('only admins can list who signed up', async () => {
+    await seedDoc(P('c1', 'calendarEvents', 'open'), ev());
+    await seedDoc(P('c1', 'calendarEvents', 'open', 'rsvps', 'stu1'), { name: 'S1', createdAt: new Date() });
+    await assertSucceeds(getDocs(collection(as('ca1'), ...P('c1', 'calendarEvents', 'open', 'rsvps'))));
+    await assertFails(getDocs(collection(as('stu2'), ...P('c1', 'calendarEvents', 'open', 'rsvps'))));
+  });
+
+  it('read state is yours alone and holds only the seen-at times', async () => {
+    const seen = (db, uid, extra = {}) => setDoc(doc(db, ...P('c1', 'readState', uid)), { announcementsSeenAt: now(), updatedAt: now(), ...extra });
+    await assertSucceeds(seen(as('stu1'), 'stu1'));
+    await assertFails(seen(as('stu1'), 'stu2'));
+    await assertFails(seen(as('stu1'), 'stu1', { role: 'SUPER_ADMIN' }));
+    await assertSucceeds(getDoc(doc(as('stu1'), ...P('c1', 'readState', 'stu1'))));
+    await assertFails(getDoc(doc(as('stu2'), ...P('c1', 'readState', 'stu1'))));
+  });
+});
+
+describe('automatic timetable saving', () => {
+  const slot = (day, period, extra = {}) => ({
+    sectionId: 'secG', subjectId: 'sub1', subjectName: 'Maths', facultyId: 'f1', facultyName: 'F1', assignmentId: 'a1',
+    dayOfWeek: day, period, room: 'R1', roomKey: 'r1', ...extra,
+  });
+  const batchOf = (db, slots) => {
+    const b = writeBatch(db);
+    for (const sl of slots) {
+      const id = `g${sl.dayOfWeek}${sl.period}`;
+      for (const lock of [`room_${sl.roomKey}`, `faculty_${sl.facultyId}`, `section_${sl.sectionId}`]) {
+        b.set(doc(db, ...P('c1', 'timetableLocks', `${lock}_${sl.dayOfWeek}_${sl.period}`)), { slotId: id });
+      }
+      b.set(doc(db, ...P('c1', 'timetableSlots', id)), { ...sl, createdAt: now(), updatedAt: now() });
+    }
+    return b;
+  };
+
+  it('five generated classes with their locks go through in one batch', async () => {
+    await assertSucceeds(batchOf(as('ca1'), [1, 2, 3, 4, 5].map((p) => slot(1, p))).commit());
+  });
+
+  it('a generated class that lands on a taken teacher is refused, and the whole batch with it', async () => {
+    await assertSucceeds(batchOf(as('ca1'), [slot(1, 1)]).commit());
+    const clash = batchOf(as('ca1'), [slot(2, 1), slot(1, 1, { sectionId: 'secH', room: 'R2', roomKey: 'r2' })]);
+    await assertFails(clash.commit());
+    if ((await getDoc(doc(as('ca1'), ...P('c1', 'timetableSlots', 'g21')))).exists()) throw new Error('the batch was half saved');
+  });
+
+  it('a class is removed together with its three locks', async () => {
+    await assertSucceeds(batchOf(as('ca1'), [slot(1, 1)]).commit());
+    const db = as('ca1');
+    const b = writeBatch(db);
+    for (const lock of ['room_r1', 'faculty_f1', 'section_secG']) b.delete(doc(db, ...P('c1', 'timetableLocks', `${lock}_1_1`)));
+    b.delete(doc(db, ...P('c1', 'timetableSlots', 'g11')));
+    await assertSucceeds(b.commit());
+    await assertSucceeds(batchOf(as('ca1'), [slot(1, 1, { sectionId: 'secH' })]).commit()); // the teacher is free again
   });
 });

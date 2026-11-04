@@ -18,7 +18,7 @@ A responsive web-based College Management System (CMS) that centralizes student,
 - Keep the first release simple, secure, and free to run on the Firebase Spark plan.
 
 ### Out of scope for MVP
-Fees, payments and receipts (no payment system), online admission applications, library, hostel, transport, payroll, placement, inventory, AI, mobile apps, online exams, parent portal, automated timetable generation, SaaS subscription billing, self-service college sign-up (the Platform Admin creates and suspends colleges by hand), and custom domains or branding.
+Fees, payments and receipts (no payment system), online admission applications, hostel, transport, payroll, placement, inventory, AI, mobile apps, online exams, parent portal, automated timetable generation, SaaS subscription billing, self-service college sign-up (the Platform Admin creates and suspends colleges by hand), and custom domains or branding.
 
 ## 2. User roles
 

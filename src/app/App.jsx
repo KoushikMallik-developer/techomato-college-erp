@@ -4,6 +4,9 @@ import BrandMark from '../components/BrandMark';
 import { useCtx } from './AuthProvider';
 import { Button, Loading } from '../components/ui';
 import ErrorBoundary from '../components/ErrorBoundary';
+import Bell from '../components/Bell';
+import SearchPalette from '../components/SearchPalette';
+import { OfflineBanner, ThemeToggle } from '../components/widgets';
 import { ROLES, isAdminRole } from '../lib/tenant';
 import Login from '../features/auth/Login';
 const Landing = lazy(() => import('../features/landing/Landing'));
@@ -23,6 +26,9 @@ const Announcements = lazy(() => import('../features/announcements/Announcements
 const Users = lazy(() => import('../features/users/Users'));
 const Settings = lazy(() => import('../features/users/Settings'));
 const Profile = lazy(() => import('../features/users/Profile'));
+const Calendar = lazy(() => import('../features/calendar/Calendar'));
+const Requests = lazy(() => import('../features/requests/Requests'));
+const Library = lazy(() => import('../features/library/Library'));
 
 function navFor(role) {
   if (role === ROLES.PLATFORM_ADMIN) return [['/dashboard', 'Colleges'], ['/admins', 'Platform admins']];
@@ -32,19 +38,22 @@ function navFor(role) {
       ...common,
       ['/students', 'Students'], ['/faculty', 'Faculty'], ['/academics', 'Academics'],
       ['/timetable', 'Timetable'], ['/attendance', 'Attendance'], ['/exams', 'Exams'],
-      ['/materials', 'Class materials'], ['/announcements', 'Announcements'], ['/users', 'Users & audit'],
+      ['/materials', 'Class materials'], ['/library', 'Library'], ['/calendar', 'Calendar'], ['/requests', 'Requests'], ['/announcements', 'Announcements'], ['/users', 'Users & audit'],
       ...(role === ROLES.SUPER_ADMIN ? [['/settings', 'College settings']] : []),
     ];
   }
   if (role === ROLES.FACULTY) {
     return [
-      ...common, ['/attendance', 'Attendance'], ['/exams', 'Marks entry'], ['/materials', 'Class materials'],
-      ['/timetable', 'My timetable'], ['/announcements', 'Announcements'], ['/profile', 'My profile'],
+      ...common, ['/attendance', 'Attendance'], ['/exams', 'Marks entry'], ['/materials', 'Class materials'], ['/library', 'Library'],
+      ['/timetable', 'My timetable'], ['/calendar', 'Calendar'], ['/requests', 'My requests'], ['/announcements', 'Announcements'], ['/profile', 'My profile'],
     ];
   }
+  if (role === ROLES.LIBRARIAN) {
+    return [...common, ['/library', 'Library'], ['/calendar', 'Calendar'], ['/announcements', 'Announcements'], ['/profile', 'My profile']];
+  }
   return [
-    ...common, ['/attendance', 'My attendance'], ['/exams', 'My results'], ['/materials', 'Class materials'],
-    ['/timetable', 'Timetable'], ['/announcements', 'Announcements'], ['/profile', 'My profile'],
+    ...common, ['/attendance', 'My attendance'], ['/exams', 'My results'], ['/materials', 'Class materials'], ['/library', 'Library'],
+    ['/timetable', 'Timetable'], ['/calendar', 'Calendar'], ['/requests', 'My requests'], ['/announcements', 'Announcements'], ['/profile', 'My profile'],
   ];
 }
 
@@ -53,11 +62,12 @@ function Shell() {
   const [open, setOpen] = useState(false);
   const { pathname } = useLocation();
   const admin = isAdminRole(role);
+  const platform = role === ROLES.PLATFORM_ADMIN;
   return (
-    <div className="shell">
+    <div className={`shell${role === ROLES.STUDENT ? ' student' : ''}`}>
       <Button className="menu-btn" onClick={() => setOpen(!open)} aria-expanded={open}>Menu</Button>
       <aside className={`side ${open ? 'open' : ''}`}>
-        <div className="brand"><BrandMark />{institution?.name ?? 'Techomato ERP'}</div>
+        <div className="brand"><BrandMark />{institution?.name ?? 'Techomato Colleges'}</div>
         <nav aria-label="Main">
           {navFor(role).map(([to, label]) => (
             <NavLink key={to} to={to} onClick={() => setOpen(false)}>{label}</NavLink>
@@ -70,6 +80,12 @@ function Shell() {
         </div>
       </aside>
       <main className="main">
+        <OfflineBanner />
+        <div className="topbar">
+          <SearchPalette pages={navFor(role)} />
+          <ThemeToggle />
+          {!platform && <Bell />}
+        </div>
         <ErrorBoundary key={pathname} onSignOut={logout}>
         <Suspense fallback={<Loading />}>
         <Routes>
@@ -86,6 +102,9 @@ function Shell() {
               <Route path="/exams" element={<Exams />} />
               <Route path="/materials" element={<Materials />} />
               <Route path="/announcements" element={<Announcements />} />
+              <Route path="/calendar" element={<Calendar />} />
+              <Route path="/library" element={<Library />} />
+              {(admin || role === ROLES.STUDENT || role === ROLES.FACULTY) && <Route path="/requests" element={<Requests />} />}
               {admin && <Route path="/students" element={<Students />} />}
               {admin && <Route path="/students/:id" element={<StudentDetail />} />}
               {admin && <Route path="/faculty" element={<Faculty />} />}

@@ -24,7 +24,7 @@ function UserList() {
   const [creating, setCreating] = useState(false);
   const { data, loading, error, reload } = useAsync(
     // Admin accounts only: the college's students and faculty are thousands of rows with nothing to do here.
-    async () => (await Promise.all(['SUPER_ADMIN', 'COLLEGE_ADMIN'].map((r) =>
+    async () => (await Promise.all(['SUPER_ADMIN', 'COLLEGE_ADMIN', 'LIBRARIAN'].map((r) =>
       list(query(collection(db, 'users'), where('institutionId', '==', iid), where('role', '==', r)))))).flat(),
     [iid],
   );
@@ -33,7 +33,7 @@ function UserList() {
   const isSuper = role === ROLES.SUPER_ADMIN;
   // Only the Super Admin blocks College Admins. Faculty and students are deactivated from their own profile pages,
   // which also change the profile status in the same batch.
-  const manageable = (u) => isSuper && u.role === ROLES.COLLEGE_ADMIN && u.id !== uid;
+  const manageable = (u) => ((isSuper && u.role === ROLES.COLLEGE_ADMIN) || u.role === ROLES.LIBRARIAN) && u.id !== uid;
 
   const setActive = (u, active) =>
     action.run(async () => {

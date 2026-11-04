@@ -71,7 +71,7 @@ export function Tabs({ tabs, value, onChange }) {
   );
 }
 
-export function Modal({ title, onClose, children }) {
+export function Modal({ title, onClose, wide, children }) {
   const titleId = useId();
   const ref = useRef();
   // Callers pass a new onClose every render; a ref keeps the effect from re-running (and stealing focus) on each keystroke.
@@ -79,7 +79,7 @@ export function Modal({ title, onClose, children }) {
   close.current = onClose;
   useEffect(() => {
     const opener = document.activeElement;
-    ref.current.focus();
+    (ref.current.querySelector('[data-autofocus]') ?? ref.current).focus();
     const onKey = (e) => {
       if (e.key === 'Escape') return close.current();
       if (e.key !== 'Tab') return;
@@ -94,7 +94,7 @@ export function Modal({ title, onClose, children }) {
   }, []);
   return (
     <div className="modal-back" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="modal" role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1} ref={ref}>
+      <div className={`modal${wide ? ' wide' : ''}`} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1} ref={ref}>
         <h2 id={titleId}>{title}</h2>
         {children}
       </div>

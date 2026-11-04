@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { useCtx } from '../../app/AuthProvider';
 import BrandMark from '../../components/BrandMark';
+import { ThemeToggle } from '../../components/widgets';
 import './landing.css';
 
 const CONTACT = import.meta.env.VITE_CONTACT_EMAIL;
@@ -102,12 +103,13 @@ export default function Landing() {
       <a className="lp-skip" href="#main">Skip to content</a>
       <header className="lp-nav">
         <div className="lp-wrap lp-nav-in">
-          <Link to="/" className="lp-brand"><BrandMark size={30} /> Techomato College ERP</Link>
+          <Link to="/" className="lp-brand"><BrandMark size={30} /> Techomato Colleges</Link>
           <nav aria-label="Page sections" className="lp-links">
             <a href="#features">Features</a>
             <a href="#how">How it works</a>
             <a href="#roles">Who it is for</a>
           </nav>
+          <ThemeToggle />
           <Link to={to} className="lp-btn lp-btn-solid lp-btn-sm">{label}</Link>
         </div>
       </header>
@@ -213,7 +215,7 @@ export default function Landing() {
 
       <footer className="lp-foot">
         <div className="lp-wrap lp-foot-in">
-          <span>© {new Date().getFullYear()} Techomato College ERP</span>
+          <span>© {new Date().getFullYear()} Techomato Colleges</span>
           <Link to={to}>{label}</Link>
         </div>
       </footer>

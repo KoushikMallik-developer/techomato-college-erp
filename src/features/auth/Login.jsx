@@ -5,6 +5,7 @@ import { auth } from '../../lib/firebase';
 import { Alert, Button, Input, useAction } from '../../components/ui';
 import { useCtx } from '../../app/AuthProvider';
 import BrandMark from '../../components/BrandMark';
+import { ThemeToggle } from '../../components/widgets';
 import { loginEmail } from '../../lib/calc';
 
 export default function Login() {
@@ -23,9 +24,9 @@ export default function Login() {
   return (
     <div className="login">
       <form className="card" onSubmit={submit}>
-        <Link to="/">← Back to home</Link>
+        <div className="login-top"><Link to="/">← Back to home</Link><ThemeToggle /></div>
         <BrandMark size={36} />
-        <h1>Techomato College ERP</h1>
+        <h1>Techomato Colleges</h1>
         <p className="muted">Sign in with the email your college gave you.</p>
         <Alert kind="error">{error || accountError}</Alert>
         <Alert kind="ok">{done}</Alert>

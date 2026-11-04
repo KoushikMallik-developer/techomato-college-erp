@@ -16,12 +16,18 @@ service cloud.firestore {
     }
     function role() { return me().role; }
     function isAdmin(iid) { return tenantOk(iid) && role() in ['SUPER_ADMIN', 'COLLEGE_ADMIN']; }
-    function isStaff(iid) { return tenantOk(iid) && role() in ['FACULTY', 'COLLEGE_ADMIN', 'SUPER_ADMIN']; }
+    function isStaff(iid) { return tenantOk(iid) && role() in ['FACULTY', 'COLLEGE_ADMIN', 'SUPER_ADMIN', 'LIBRARIAN']; }
+    function isLibrarian(iid) { return tenantOk(iid) && role() == 'LIBRARIAN'; }
+    // A college has no library until an admin creates one (libraries/{id}); it can have several. A library is run by
+    // the admins and by its own librarian (users/{uid}.libraryId). Turning it OFF freezes changes but keeps the data.
+    function libraryOn(iid, lid) { return get(/databases/$(database)/documents/institutions/$(iid)/libraries/$(lid)).data.status == 'ACTIVE'; }
+    function libStaff(iid, lid) { return isAdmin(iid) || (isLibrarian(iid) && me().libraryId == lid); }
+    function libOps(iid, lid) { return libStaff(iid, lid) && libraryOn(iid, lid); }
     function isFaculty(iid) { return tenantOk(iid) && role() == 'FACULTY'; }
     function isStudent(iid) { return tenantOk(iid) && role() == 'STUDENT'; }
     // Roles the caller may create or change. Nobody can grant SUPER_ADMIN or PLATFORM_ADMIN here.
     function manageable(r) {
-      return r in ['FACULTY', 'STUDENT'] || (role() == 'SUPER_ADMIN' && r == 'COLLEGE_ADMIN');
+      return r in ['FACULTY', 'STUDENT', 'LIBRARIAN'] || (role() == 'SUPER_ADMIN' && r == 'COLLEGE_ADMIN');
     }
     // The audit entry must be created in this batch; an old entry cannot be reused.
     function newAudit(iid, id) {
@@ -127,6 +133,7 @@ service cloud.firestore {
 
       match /students/{studentId} {
         allow read: if isAdmin(iid) || (isStudent(iid) && me().studentId == studentId);
+        allow get: if isLibrarian(iid) && libraryOn(iid, me().libraryId);
         allow create: if isAdmin(iid)
           && request.resource.data.enrollmentKey == request.resource.data.enrollmentNumber.upper().trim()
           && existsAfter(/databases/$(database)/documents/institutions/$(iid)/enrollmentNumberIndex/$(request.resource.data.enrollmentKey));
@@ -152,6 +159,7 @@ service cloud.firestore {
 
       match /enrollmentNumberIndex/{key} {
         allow read: if isAdmin(iid);
+        allow get: if isLibrarian(iid) && libraryOn(iid, me().libraryId);
         allow create: if isAdmin(iid);   // create-only: a number can never be reused
       }
 
@@ -186,20 +194,21 @@ service cloud.firestore {
         allow read: if tenantOk(iid);
         allow write: if isAdmin(iid);
 
+        function teaches() {
+          return isFaculty(iid) && assignment(assignmentId).facultyId == me().facultyId;
+        }
+        // The teacher may upload only while the assignment is active (a replaced teacher cannot).
+        function mayUpload() {
+          return isAdmin(iid) || (teaches() && assignment(assignmentId).active == true);
+        }
+        // One lookup: enrollment IDs are {studentId}_{semesterId}.
+        function enrolled() {
+          let e = get(/databases/$(database)/documents/institutions/$(iid)/enrollments/$(me().studentId + '_' + assignment(assignmentId).semesterId)).data;
+          return isStudent(iid)
+            && e.sectionId == assignment(assignmentId).sectionId && e.status != 'WITHDRAWN';
+        }
+
         match /documents/{docId} {
-          function teaches() {
-            return isFaculty(iid) && assignment(assignmentId).facultyId == me().facultyId;
-          }
-          // The teacher may upload only while the assignment is active (a replaced teacher cannot).
-          function mayUpload() {
-            return isAdmin(iid) || (teaches() && assignment(assignmentId).active == true);
-          }
-          // One lookup: enrollment IDs are {studentId}_{semesterId}.
-          function enrolled() {
-            let e = get(/databases/$(database)/documents/institutions/$(iid)/enrollments/$(me().studentId + '_' + assignment(assignmentId).semesterId)).data;
-            return isStudent(iid)
-              && e.sectionId == assignment(assignmentId).sectionId && e.status != 'WITHDRAWN';
-          }
           allow read: if isAdmin(iid) || teaches() || enrolled();
           allow create: if mayUpload() && newFile('teachingAssignments', assignmentId, docId);
           allow update: if mayUpload() && fileStatusChange();
@@ -211,6 +220,160 @@ service cloud.firestore {
             allow delete: if mayUpload();
           }
         }
+      }
+
+      // Student requests: leave and grievances. A student files and may cancel while pending; an admin decides once.
+      match /requests/{id} {
+        function mine() {
+          return (isStudent(iid) && resource.data.studentId == me().studentId)
+            || (isFaculty(iid) && resource.data.facultyId == me().facultyId);
+        }
+        function sane(d) {
+          return d.kind in ['LEAVE', 'GRIEVANCE'] && d.status == 'PENDING' && d.createdAt == request.time
+            && d.subject is string && d.subject.size() > 0 && d.subject.size() <= 120
+            && d.message is string && d.message.size() >= 10 && d.message.size() <= 1000
+            && (d.kind == 'GRIEVANCE'
+                || (d.fromDate is string && d.toDate is string && d.fromDate <= d.toDate));
+        }
+        allow read: if isAdmin(iid) || mine();
+        allow create: if sane(request.resource.data) && (
+          (isStudent(iid)
+            && request.resource.data.studentId == me().studentId
+            && request.resource.data.studentName == get(/databases/$(database)/documents/institutions/$(iid)/students/$(me().studentId)).data.name
+            && request.resource.data.keys().hasOnly(['kind', 'studentId', 'studentName', 'subject', 'message', 'fromDate', 'toDate', 'status', 'createdAt', 'updatedAt']))
+          || (isFaculty(iid)
+            && request.resource.data.facultyId == me().facultyId
+            && request.resource.data.facultyName == get(/databases/$(database)/documents/institutions/$(iid)/faculty/$(me().facultyId)).data.name
+            && request.resource.data.keys().hasOnly(['kind', 'facultyId', 'facultyName', 'subject', 'message', 'fromDate', 'toDate', 'status', 'createdAt', 'updatedAt'])));
+        // Owner cancels a waiting request. An admin decides a waiting one (a rejection needs a reason),
+        // or revokes an approved leave (a reason is needed). Nothing else changes.
+        allow update: if (mine() && resource.data.status == 'PENDING'
+              && request.resource.data.status == 'CANCELLED'
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt']))
+          || (isAdmin(iid)
+              && ((resource.data.status == 'PENDING'
+                    && (resource.data.kind == 'LEAVE'
+                        ? request.resource.data.status in ['APPROVED', 'REJECTED']
+                        : request.resource.data.status == 'RESOLVED'))
+                  || (resource.data.status == 'APPROVED' && request.resource.data.status == 'REVOKED'))
+              && (request.resource.data.status in ['APPROVED', 'RESOLVED']
+                  || (request.resource.data.response is string && request.resource.data.response.size() > 0))
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'response', 'decidedBy', 'decidedAt', 'updatedAt'])
+              && request.resource.data.decidedBy == request.auth.uid
+              && request.resource.data.decidedAt == request.time);
+      }
+
+      // Academic calendar and events. Everyone in the college reads; admins write. RSVP docs are named by the user's own uid.
+      match /calendarEvents/{eventId} {
+        allow read: if tenantOk(iid);
+        allow create, update: if isAdmin(iid)
+          && request.resource.data.type in ['HOLIDAY', 'EXAM', 'EVENT', 'OTHER']
+          && request.resource.data.title is string && request.resource.data.title.size() > 0 && request.resource.data.title.size() <= 120
+          && request.resource.data.startDate is string && request.resource.data.endDate is string
+          && request.resource.data.startDate <= request.resource.data.endDate;
+        allow delete: if isAdmin(iid);
+
+        match /rsvps/{uid} {
+          allow read: if isAdmin(iid) || (tenantOk(iid) && request.auth.uid == uid);
+          allow create: if tenantOk(iid) && request.auth.uid == uid
+            && get(/databases/$(database)/documents/institutions/$(iid)/calendarEvents/$(eventId)).data.rsvp == true
+            && request.resource.data.keys().hasOnly(['name', 'createdAt'])
+            && request.resource.data.name is string && request.resource.data.name.size() <= 100
+            && request.resource.data.createdAt == request.time;
+          allow delete: if tenantOk(iid) && request.auth.uid == uid;
+        }
+      }
+
+      // What each user has already seen, so the bell can count what is new. Only your own document.
+      match /readState/{uid} {
+        allow read: if tenantOk(iid) && request.auth.uid == uid;
+        allow create, update: if tenantOk(iid) && request.auth.uid == uid
+          && request.resource.data.keys().hasOnly(['announcementsSeenAt', 'eventsSeenAt', 'requestsSeenAt', 'resultsSeenAt', 'updatedAt']);
+      }
+
+      // Library. Admins and the library's own librarian run it; students read the catalog and their own loans.
+      // `available` and `copies` on a book are a display cache kept by the same batches; the copy and loan documents
+      // are the truth. A copy goes AVAILABLE -> ON_LOAN only together with a new ACTIVE loan, and back only together
+      // with that loan being RETURNED, so two desks cannot issue the same copy.
+
+      // An admin creates a library together with its librarian's login (a LIBRARIAN user with libraryId) in one batch,
+      // can rename or turn it off and on, and can replace the librarian (the old login must be blocked in the same batch).
+      match /libraries/{id} {
+        function userAfter(uid) { return getAfter(/databases/$(database)/documents/users/$(uid)).data; }
+        function librarianOk(uid) {
+          return userAfter(uid).role == 'LIBRARIAN' && userAfter(uid).institutionId == iid && userAfter(uid).libraryId == id;
+        }
+        allow read: if tenantOk(iid);
+        allow create: if isAdmin(iid)
+          && request.resource.data.keys().hasOnly(['name', 'librarianEmail', 'librarianUid', 'status', 'createdAt', 'updatedAt'])
+          && request.resource.data.name is string && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 100
+          && request.resource.data.status == 'ACTIVE'
+          && existsAfter(/databases/$(database)/documents/users/$(request.resource.data.librarianUid))
+          && librarianOk(request.resource.data.librarianUid);
+        allow update: if isAdmin(iid) && (
+          (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'status', 'updatedAt'])
+            && request.resource.data.name is string && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 100
+            && request.resource.data.status in ['ACTIVE', 'OFF'])
+          || (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['librarianEmail', 'librarianUid', 'updatedAt'])
+            && existsAfter(/databases/$(database)/documents/users/$(request.resource.data.librarianUid))
+            && librarianOk(request.resource.data.librarianUid)
+            && userAfter(resource.data.librarianUid).active == false));
+      }
+
+      match /books/{id} {
+        allow read: if tenantOk(iid);
+        allow create: if libOps(iid, request.resource.data.libraryId)
+          && request.resource.data.keys().hasOnly(['libraryId', 'title', 'author', 'isbn', 'category', 'status', 'copies', 'available', 'createdAt', 'updatedAt'])
+          && request.resource.data.title is string && request.resource.data.title.size() > 0 && request.resource.data.title.size() <= 200
+          && request.resource.data.author is string && request.resource.data.author.size() <= 120
+          && request.resource.data.isbn is string && request.resource.data.isbn.size() <= 20
+          && request.resource.data.category is string && request.resource.data.category.size() <= 60
+          && request.resource.data.status == 'ACTIVE' && request.resource.data.copies == 0 && request.resource.data.available == 0;
+        allow update: if libOps(iid, resource.data.libraryId)
+          && ((request.resource.data.diff(resource.data).affectedKeys().hasOnly(['title', 'author', 'isbn', 'category', 'status', 'updatedAt'])
+                  && request.resource.data.title is string && request.resource.data.title.size() > 0 && request.resource.data.title.size() <= 200
+                  && request.resource.data.author is string && request.resource.data.author.size() <= 120
+                  && request.resource.data.isbn is string && request.resource.data.isbn.size() <= 20
+                  && request.resource.data.category is string && request.resource.data.category.size() <= 60
+                  && request.resource.data.status in ['ACTIVE', 'ARCHIVED'])
+              || (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['copies', 'available', 'updatedAt'])
+                  && request.resource.data.available >= 0 && request.resource.data.available <= request.resource.data.copies));
+      }
+
+      match /bookCopies/{code} {
+        function loanAfter(loanId) { return getAfter(/databases/$(database)/documents/institutions/$(iid)/loans/$(loanId)).data; }
+        allow read: if libStaff(iid, resource.data.libraryId);
+        allow create: if libOps(iid, request.resource.data.libraryId)
+          && request.resource.data.keys().hasOnly(['libraryId', 'bookId', 'status', 'createdAt', 'updatedAt'])
+          && request.resource.data.status == 'AVAILABLE'
+          && get(/databases/$(database)/documents/institutions/$(iid)/books/$(request.resource.data.bookId)).data.libraryId == request.resource.data.libraryId;
+        allow update: if libOps(iid, resource.data.libraryId)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'loanId', 'updatedAt'])
+          && ((resource.data.status == 'AVAILABLE' && request.resource.data.status in ['WITHDRAWN', 'LOST'])
+            || (resource.data.status == 'AVAILABLE' && request.resource.data.status == 'ON_LOAN'
+                && loanAfter(request.resource.data.loanId).copyId == code && loanAfter(request.resource.data.loanId).status == 'ACTIVE'
+                && !exists(/databases/$(database)/documents/institutions/$(iid)/loans/$(request.resource.data.loanId)))
+            || (resource.data.status == 'ON_LOAN' && request.resource.data.status in ['AVAILABLE', 'LOST']
+                && loanAfter(resource.data.loanId).status == 'RETURNED')
+            || (resource.data.status in ['WITHDRAWN', 'LOST'] && request.resource.data.status == 'AVAILABLE'));
+      }
+
+      match /loans/{id} {
+        allow read: if libStaff(iid, resource.data.libraryId) || (isStudent(iid) && resource.data.studentId == me().studentId);
+        allow create: if libOps(iid, request.resource.data.libraryId)
+          && request.resource.data.keys().hasOnly(['libraryId', 'copyId', 'bookId', 'bookTitle', 'studentId', 'studentName', 'issuedAt', 'dueDate', 'issuedBy', 'status', 'createdAt', 'updatedAt'])
+          && request.resource.data.status == 'ACTIVE'
+          && request.resource.data.issuedAt == request.time && request.resource.data.issuedBy == request.auth.uid
+          && request.resource.data.dueDate is string && request.resource.data.dueDate.size() == 10
+          && getAfter(/databases/$(database)/documents/institutions/$(iid)/bookCopies/$(request.resource.data.copyId)).data.status == 'ON_LOAN'
+          && getAfter(/databases/$(database)/documents/institutions/$(iid)/bookCopies/$(request.resource.data.copyId)).data.loanId == id
+          && getAfter(/databases/$(database)/documents/institutions/$(iid)/bookCopies/$(request.resource.data.copyId)).data.libraryId == request.resource.data.libraryId
+          && get(/databases/$(database)/documents/institutions/$(iid)/students/$(request.resource.data.studentId)).data.status == 'ACTIVE'
+          && get(/databases/$(database)/documents/institutions/$(iid)/students/$(request.resource.data.studentId)).data.name == request.resource.data.studentName;
+        allow update: if libOps(iid, resource.data.libraryId)
+          && resource.data.status == 'ACTIVE' && request.resource.data.status == 'RETURNED'
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'returnedAt', 'returnedBy', 'updatedAt'])
+          && request.resource.data.returnedAt == request.time && request.resource.data.returnedBy == request.auth.uid;
       }
 
       match /timetableLocks/{id} {

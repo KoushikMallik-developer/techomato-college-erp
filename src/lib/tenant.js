@@ -11,6 +11,7 @@ export const ROLES = {
   COLLEGE_ADMIN: 'COLLEGE_ADMIN',
   FACULTY: 'FACULTY',
   STUDENT: 'STUDENT',
+  LIBRARIAN: 'LIBRARIAN',
 };
 
 export const isAdminRole = (role) => role === ROLES.SUPER_ADMIN || role === ROLES.COLLEGE_ADMIN;

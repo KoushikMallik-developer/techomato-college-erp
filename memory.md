@@ -1,10 +1,10 @@
-# Project memory — Techomato College ERP
+# Project memory — Techomato Colleges
 
 Notes on decisions and state, so a new session can continue without re-deriving them. The specs are [product.md](product.md) and [system_design.md](system_design.md). This file does not repeat them; it records why things are the way they are.
 
 ## State
 - The app is built (React + Vite, `firestore.rules`, `scripts/`). It is a git repo with one local commit; nothing is pushed.
-- Verified: `npm test` (15 unit and component tests), `npm run test:rules` (50 Security Rules tests on the Firestore emulator, including a 60-student attendance batch), and `vite build`.
+- Verified: `npm test` (unit and component tests), `npm run test:rules` (Security Rules tests on the Firestore emulator, including a 60-student attendance batch), and `vite build`.
 - Not verified: the UI has never been opened in a browser against a real or emulated project, and the quota numbers are estimates.
 - Rules fixes found while building: students must fetch results by ID (`{examId}_{studentId}`), because rules do not filter queries and a query touching a draft result is rejected whole.
 - `firebase emulators:exec` leaves a Java process holding its port after a run (killing it was not permitted). The rules tests use `firebase.rules-test.json`; if the port is taken, change the number there (now 8383).
@@ -48,3 +48,20 @@ Notes on decisions and state, so a new session can continue without re-deriving 
 - They ask for a review (`/ponytail:ponytail-review`), then say "fix all", then ask for another review. Each cycle has found fewer and smaller issues.
 - They want plain English and short answers. Reviews list findings in Must fix / Should fix / Nice to have, numbered.
 - Claims in my summaries must be accurate. I once overclaimed that file slots stop a write flood, and the review caught it.
+
+## Features added after the first release
+- **Decided:** the user asked for "maximum features" and chose student requests, calendar and events, search and everyday tools, and more playful student pages. Reports/printing and bulk import were offered and not chosen; fees and payments stay out.
+- Requests (leave and concerns), calendar with sign-up, notification bell, search palette (Ctrl K), light/dark switch, activity feed, offline shell, playful student home (ring, streak, badges, mascot).
+- **Homework (assignments with answers and grading) was built, then removed on the user's request.** Nothing of it is left in the app, rules, indexes or tests; it was never deployed.
+- Shortcuts: leave approval does not touch attendance; event deletion leaves its sign-ups; the bell counts announcements by reading the latest 10; Firestore offline persistence is NOT on (stale records would be worse than a notice).
+- `scripts/seed-demo.js` fills the emulators with demo data. The Playwright project `techomato-college-erp-test` has a `local` project that walks these flows against the emulators.
+- Run `npm test` and `npm run test:rules` for the current counts. The rules test port keeps moving (see `firebase.rules-test.json`) because the emulator leaks its port.
+- **Automatic timetable:** `generateTimetable` in `src/lib/calc.js` (pure, 5 unit tests) plus the Generate dialog in `Timetable.jsx`. Greedy with seeded retries; fills free periods or replaces a section's week; saved 5 classes per batch. Rules tests cover a 5-class batch, a clashing batch failing whole, and removal freeing the locks.
+
+## PRD review follow-up (library, requests, import)
+
+- Built after comparing with `College_ERP_MERN_PRD.md`: faculty requests, leave rules (overlap, reject reason, revoke, 10-character minimum), CSV import for students and faculty, promote a class, library, results-published notice in the bell, self-service password change, roster/leave exports, CSV formula guard, a reason when results are unpublished.
+- Already matched the PRD, no change: attendance percentage (no records is shown as a dash, leave is not counted), absent kept apart from zero marks, audited attendance corrections for faculty.
+- Not built, on purpose: void of an attendance register (rules forbid removing records), keeping old results visible while corrected (students see nothing while a result is unpublished), subject-offering history with effective dates, web push, migration, backups.
+- Library rule limits: the 3-loan limit is a client check; `available` and `copies` on a book are a cache.
+- Library is opt-in per college: an admin creates `libraries/{id}` (several allowed), which also creates that library's LIBRARIAN user (`users.libraryId`). Rules scope books, copies and loans by `libraryId`; status OFF freezes writes. Replace-librarian blocks the old login in the same batch. Accession codes are unique college-wide. Libraries made with the earlier single-library build (`libraries/main`, no `libraryId` on books) would need a one-off fix; none were deployed.

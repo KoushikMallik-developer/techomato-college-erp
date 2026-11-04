@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { attendanceBySubject, checkExam, groupByCost, computeResult, enrollmentKey, percent, planAttendanceWrites, loginEmail, recordKey, roomKey, todayIn, validTimeZone } from '../src/lib/calc';
+import { splitPromotion, addDays, overdueDays, toCsv, csvEscape, leaveOverlaps, parseCsv, generateTimetable, slotLocks, attendanceBySubject, attendanceStreak, checkExam, groupByCost, computeResult, enrollmentKey, percent, planAttendanceWrites, loginEmail, recordKey, roomKey, todayIn, validTimeZone } from '../src/lib/calc';
 
 describe('attendance', () => {
   it('excludes leave from the percentage', () => {
@@ -109,5 +109,128 @@ describe('login name', () => {
   it('maps a bare username to a fixed address and leaves emails alone', () => {
     expect(loginEmail(' Admin ')).toBe('admin@techomato.local');
     expect(loginEmail('A@B.com')).toBe('a@b.com');
+  });
+});
+
+describe('attendance streak', () => {
+  const doc = (records) => ({ records });
+  it('counts the latest days present and stops at an absent day', () => {
+    const docs = [doc({ d20261101_1: 'PRESENT', d20261102_1: 'PRESENT' }), doc({ d20261102_2: 'PRESENT', d20261103_1: 'PRESENT', d20261030_1: 'ABSENT' })];
+    expect(attendanceStreak(docs)).toBe(3);
+    expect(attendanceStreak([...docs, doc({ d20261102_3: 'ABSENT' })])).toBe(1);
+  });
+  it('skips leave-only days and is 0 with no records', () => {
+    expect(attendanceStreak([doc({ d20261101_1: 'PRESENT', d20261102_1: 'LEAVE', d20261103_1: 'PRESENT' })])).toBe(2);
+    expect(attendanceStreak([])).toBe(0);
+  });
+});
+
+describe('automatic timetable', () => {
+  const base = { sectionId: 'sec1', days: [1, 2, 3, 4, 5], periods: [1, 2, 3, 4, 5, 6], rooms: ['r1'], busy: new Set() };
+  const reqs = [
+    { id: 'math', facultyId: 'f1', perWeek: 5 },
+    { id: 'phys', facultyId: 'f2', perWeek: 4 },
+    { id: 'chem', facultyId: 'f1', perWeek: 3 }, // same teacher as maths: they can never overlap
+  ];
+  const clashes = (placements, key) => {
+    const seen = new Set();
+    for (const p of placements) {
+      const k = key(p);
+      if (seen.has(k)) return true;
+      seen.add(k);
+    }
+    return false;
+  };
+
+  it('places every session with no teacher, room or section clash', () => {
+    const { placements, unplaced } = generateTimetable({ ...base, requirements: reqs });
+    expect(unplaced).toEqual([]);
+    expect(placements).toHaveLength(12);
+    const f = Object.fromEntries(reqs.map((r) => [r.id, r.facultyId]));
+    expect(clashes(placements, (p) => `${f[p.id]}_${p.dayOfWeek}_${p.period}`)).toBe(false);
+    expect(clashes(placements, (p) => `${p.dayOfWeek}_${p.period}`)).toBe(false); // one section, one class at a time
+  });
+
+  it('spreads a subject over different days when it can', () => {
+    const { placements } = generateTimetable({ ...base, requirements: [{ id: 'math', facultyId: 'f1', perWeek: 5 }] });
+    expect(new Set(placements.map((p) => p.dayOfWeek)).size).toBe(5);
+  });
+
+  it('keeps away from places that are already taken', () => {
+    const busy = new Set(['faculty_f1_1_1', 'faculty_f1_1_2', 'room_r1_2_1', 'section_sec1_3_1']);
+    const { placements } = generateTimetable({ ...base, busy, requirements: reqs });
+    const at = (d, p) => placements.filter((x) => x.dayOfWeek === d && x.period === p);
+    expect(at(1, 1).filter((x) => x.id === 'math' || x.id === 'chem')).toEqual([]);
+    expect(at(2, 1)).toEqual([]);
+    expect(at(3, 1)).toEqual([]);
+  });
+
+  it('uses the next room when the first is taken, and reports what cannot fit', () => {
+    const busy = new Set(['room_r1_1_1']);
+    const two = generateTimetable({ ...base, rooms: ['r1', 'r2'], busy, requirements: [{ id: 'math', facultyId: 'f1', perWeek: 30 }] });
+    expect(two.placements.find((p) => p.dayOfWeek === 1 && p.period === 1)?.roomKey).toBe('r2');
+    const full = generateTimetable({ ...base, requirements: [{ id: 'math', facultyId: 'f1', perWeek: 31 }] });
+    expect(full.unplaced).toEqual([{ id: 'math', missing: 1 }]);
+    expect(full.placements).toHaveLength(30);
+  });
+
+  it('gives the same answer for the same input, and slotLocks names three places', () => {
+    const a = generateTimetable({ ...base, requirements: reqs });
+    expect(generateTimetable({ ...base, requirements: reqs })).toEqual(a);
+    expect(slotLocks({ roomKey: 'r1', facultyId: 'f1', sectionId: 'sec1', dayOfWeek: 2, period: 3 }))
+      .toEqual(['room_r1_2_3', 'faculty_f1_2_3', 'section_sec1_2_3']);
+  });
+});
+
+describe('csvEscape', () => {
+  it('quotes cells and neutralises spreadsheet formulas', () => {
+    expect(csvEscape('Asha "A"')).toBe('"Asha ""A"""');
+    expect(csvEscape('=HYPERLINK("x")')).toBe(`"'=HYPERLINK(""x"")"`);
+    expect(csvEscape('@SUM(A1)')).toBe(`"'@SUM(A1)"`);
+    expect(csvEscape('-5')).toBe('"-5"'); // a plain negative number is not a formula
+    expect(csvEscape('+91 98765 43210')).toBe(`"'+91 98765 43210"`); // Excel would read this as a formula and show #NULL!
+    expect(csvEscape(null)).toBe('""');
+  });
+});
+
+describe('leaveOverlaps', () => {
+  const L = (fromDate, toDate, status = 'APPROVED') => ({ kind: 'LEAVE', fromDate, toDate, status });
+  it('finds waiting or approved leave that shares a day, and ignores the rest', () => {
+    const all = [L('2026-11-02', '2026-11-04'), L('2026-11-10', '2026-11-10', 'REJECTED'), { kind: 'GRIEVANCE', status: 'PENDING' }];
+    expect(leaveOverlaps(all, '2026-11-04', '2026-11-06')).toHaveLength(1); // touching on one day
+    expect(leaveOverlaps(all, '2026-11-05', '2026-11-06')).toHaveLength(0);
+    expect(leaveOverlaps(all, '2026-11-10', '2026-11-10')).toHaveLength(0); // rejected does not block
+  });
+});
+
+describe('parseCsv', () => {
+  it('reads quotes, commas and line breaks inside cells, CRLF, a BOM and blank lines', () => {
+    expect(parseCsv('\uFEFFa,b\r\n"x, y","say ""hi"""\n\n"two\nlines",z')).toEqual([['a', 'b'], ['x, y', 'say "hi"'], ['two\nlines', 'z']]);
+    expect(parseCsv('a,b,')).toEqual([['a', 'b', '']]);
+    expect(parseCsv('')).toEqual([]);
+  });
+  it('round-trips what toCsv wrote', () => {
+    const rows = [['n', 'v'], ['A "q"', '1,5']];
+    expect(parseCsv(toCsv(rows))).toEqual(rows);
+  });
+});
+
+describe('library dates', () => {
+  it('adds days across month and year ends', () => {
+    expect(addDays('2026-07-02', 14)).toBe('2026-07-16');
+    expect(addDays('2026-12-25', 14)).toBe('2027-01-08');
+  });
+  it('counts overdue days: due 15 July, back 17 July is 2; on time or early is 0', () => {
+    expect(overdueDays('2026-07-15', '2026-07-17')).toBe(2);
+    expect(overdueDays('2026-07-15', '2026-07-15')).toBe(0);
+    expect(overdueDays('2026-07-15', '2026-07-10')).toBe(0);
+  });
+});
+
+describe('promotion', () => {
+  it('leaves students who already have a target enrollment', () => {
+    const r = splitPromotion([{ studentId: 'a' }, { studentId: 'b' }], [{ studentId: 'b' }, { studentId: 'z' }]);
+    expect(r.move).toEqual([{ studentId: 'a' }]);
+    expect(r.skipped).toEqual([{ studentId: 'b' }]);
   });
 });

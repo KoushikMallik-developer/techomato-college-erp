@@ -6,7 +6,7 @@ import { ROLES, tcol, tdoc } from '../../lib/tenant';
 import { audit } from '../../lib/audit';
 import { checkExam, computeResult, toCsv } from '../../lib/calc';
 import { byId, chunk, list } from '../../lib/data';
-import { Alert, Badge, Button, Input, Loading, Modal, PageHeader, Select, Table, toOptions, downloadCsv, useAction, useAsync, useConfirm, useForm } from '../../components/ui';
+import { Alert, Badge, Button, Input, Loading, Modal, PageHeader, Select, Table, Textarea, toOptions, downloadCsv, useAction, useAsync, useConfirm, useForm } from '../../components/ui';
 
 export default function Exams() {
   const { role } = useCtx();
@@ -113,6 +113,8 @@ async function loadExam(iid, exam) {
 function ExamManager({ exam, onChange }) {
   const { iid, uid } = useCtx();
   const draft = exam.status === 'DRAFT';
+  const [reopening, setReopening] = useState(false);
+  const [reason, setReason] = useState('');
   const { data, loading, error, reload } = useAsync(() => loadSummary(iid, exam), [exam.id, exam.status]);
   const [details, setDetails] = useState(null); // the full check, only after the admin asks for it
   const [adding, setAdding] = useState(false);
@@ -195,7 +197,7 @@ function ExamManager({ exam, onChange }) {
       }
       const batch = writeBatch(db);
       audit(batch, { iid, uid }, 'RESULTS_PUBLISHED', 'exams', exam.id, { students: results.length });
-      batch.update(tdoc(iid, 'exams', exam.id), { status: 'PUBLISHED', updatedAt: serverTimestamp() });
+      batch.update(tdoc(iid, 'exams', exam.id), { status: 'PUBLISHED', publishedAt: serverTimestamp(), updatedAt: serverTimestamp() });
       await batch.commit();
       onChange();
     }, 'Results published.');
@@ -211,12 +213,13 @@ function ExamManager({ exam, onChange }) {
       reload();
     });
 
-  const unpublish = () =>
+  const unpublish = (reason) =>
     action.run(async () => {
       const batch = writeBatch(db);
-      audit(batch, { iid, uid }, 'RESULTS_UNPUBLISHED', 'exams', exam.id, {});
-      batch.update(tdoc(iid, 'exams', exam.id), { status: 'DRAFT', updatedAt: serverTimestamp() });
+      audit(batch, { iid, uid }, 'RESULTS_UNPUBLISHED', 'exams', exam.id, { reason });
+      batch.update(tdoc(iid, 'exams', exam.id), { status: 'DRAFT', publishedAt: null, updatedAt: serverTimestamp() });
       await batch.commit();
+      setReopening(false);
       onChange();
     }, 'Results hidden from students. Marks can be corrected now.');
 
@@ -279,10 +282,21 @@ function ExamManager({ exam, onChange }) {
       ) : (
         <div className="row">
           <Button onClick={exportCsv} disabled={action.busy}>Export results CSV</Button>
-          <Button variant="danger" disabled={action.busy} onClick={() => confirm.ask({ title: 'Unpublish results?', body: 'Students stop seeing them until you publish again.', label: 'Unpublish' }, unpublish)}>Unpublish to correct marks</Button>
+          <Button variant="danger" disabled={action.busy} onClick={() => setReopening(true)}>Unpublish to correct marks</Button>
         </div>
       )}
       {confirm.dialog}
+      {reopening && (
+        <Modal title="Unpublish results?" onClose={() => setReopening(false)}>
+          <Alert kind="error">{action.error}</Alert>
+          <p>Students stop seeing these results until you publish again. The reason is kept in the audit log.</p>
+          <Textarea label="Why are the marks being corrected?" required minLength={5} maxLength={300} value={reason} onChange={setReason} />
+          <div className="modal-actions">
+            <Button onClick={() => setReopening(false)}>Cancel</Button>
+            <Button variant="danger" disabled={action.busy || reason.trim().length < 5} onClick={() => unpublish(reason.trim())}>Unpublish</Button>
+          </div>
+        </Modal>
+      )}
       {adding && <AddPaper subjects={data.subjects.filter((s) => !chosen.has(s.id))} onSave={addSubject} onClose={() => setAdding(false)} />}
     </div>
   );

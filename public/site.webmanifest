@@ -1,6 +1,6 @@
 {
-  "name": "Techomato College ERP",
-  "short_name": "Techomato ERP",
+  "name": "Techomato Colleges",
+  "short_name": "Colleges",
   "description": "Attendance, timetables, exams, results and class notes for your college.",
   "start_url": "/dashboard",
   "scope": "/",
